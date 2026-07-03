@@ -1,0 +1,254 @@
+use shiki::{Highlighter, HtmlOptions, LanguageBundle};
+
+static LANGUAGES: LanguageBundle = shiki_langs::languages![astro, rust, vue];
+static ALL_LANGUAGES: LanguageBundle =
+    LanguageBundle::from_groups(&[shiki_langs::generated::ALL_LANGUAGES]);
+
+#[test]
+fn highlights_rust_to_html() {
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .theme(&shiki_themes::generated::GITHUB_DARK)
+        .build()
+        .unwrap();
+
+    let html = highlighter
+        .code_to_html("fn main() {\n    println!(\"hello\");\n}", "rust")
+        .unwrap();
+
+    assert!(html.contains("fn"));
+    assert!(html.contains("main"));
+    assert!(html.contains("hello"), "{html}");
+    assert!(html.contains("color:"));
+}
+
+#[test]
+fn keeps_multiline_state() {
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .theme(&shiki_themes::generated::GITHUB_DARK)
+        .build()
+        .unwrap();
+
+    let (first, state) = highlighter
+        .tokenize_line("/* comment", "rust", None, true)
+        .unwrap();
+    let (second, _) = highlighter
+        .tokenize_line("continued */ let value = 1;", "rust", Some(&state), false)
+        .unwrap();
+
+    assert!(!first.is_empty(), "{first:#?}");
+    assert!(second.len() > 1, "{second:#?}");
+    assert_eq!(first[0].scopes, second[0].scopes);
+    assert!(second.iter().any(|token| token.scopes != second[0].scopes));
+}
+
+#[test]
+fn vue_bundle_contains_eager_dependencies() {
+    let highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["vue"])
+        .theme(&shiki_themes::generated::GITHUB_DARK)
+        .build();
+
+    assert!(highlighter.is_ok(), "{:?}", highlighter.err());
+}
+
+#[test]
+fn all_generated_assets_parse() {
+    for language in shiki_langs::generated::ALL_LANGUAGES {
+        language
+            .grammar()
+            .unwrap_or_else(|error| panic!("{}: {error}", language.id));
+    }
+    for theme in shiki_themes::generated::ALL_THEMES {
+        theme
+            .theme()
+            .unwrap_or_else(|error| panic!("{}: {error}", theme.id));
+    }
+}
+
+#[test]
+fn rust_function_and_string_use_distinct_theme_rules() {
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .theme(&shiki_themes::generated::CATPPUCCIN_MOCHA)
+        .build()
+        .unwrap();
+    let line = r#"object.get("name")"#;
+    let lines = highlighter.code_to_tokens(line, "rust").unwrap();
+    let function = lines[0]
+        .iter()
+        .find(|token| token.content == "get")
+        .unwrap();
+    let string = lines[0]
+        .iter()
+        .find(|token| token.content == "name")
+        .unwrap();
+    assert_ne!(function.color, string.color);
+}
+
+#[test]
+fn astro_injection_enters_javascript_grammar() {
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["astro"])
+        .theme(&shiki_themes::generated::CATPPUCCIN_MOCHA)
+        .build()
+        .unwrap();
+    let (_, state) = highlighter
+        .tokenize_line("<script>", "astro", None, true)
+        .unwrap();
+    let (tokens, state) = highlighter
+        .tokenize_line("const answer = \"yes\"", "astro", Some(&state), false)
+        .unwrap();
+    highlighter
+        .tokenize_line("</script>", "astro", Some(&state), false)
+        .unwrap();
+
+    let keyword = tokens
+        .iter()
+        .find(|token| &"const answer = \"yes\""[token.range.clone()] == "const")
+        .expect("javascript keyword token");
+    let string = tokens
+        .iter()
+        .find(|token| &"const answer = \"yes\""[token.range.clone()] == "yes")
+        .expect("javascript string token");
+    assert_ne!(keyword.scopes, string.scopes, "{tokens:#?}");
+}
+
+#[test]
+fn astro_dynamic_scope_capture_uses_numeric_identity() {
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["astro"])
+        .theme(&shiki_themes::generated::CATPPUCCIN_MOCHA)
+        .build()
+        .unwrap();
+
+    let tokens = highlighter
+        .code_to_scope_tokens("<script lang=\"foobar\">value</script>", "astro")
+        .unwrap();
+
+    assert!(
+        tokens[0]
+            .iter()
+            .map(|token| token.scopes)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            > 1
+    );
+}
+
+#[test]
+fn renders_multiple_themes_as_css_variables() {
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .themes([
+            ("dark", &shiki_themes::CATPPUCCIN_MOCHA),
+            ("light", &shiki_themes::CATPPUCCIN_LATTE),
+        ])
+        .build()
+        .unwrap();
+
+    let tokens = highlighter
+        .code_to_tokens_with_themes(r#"object.get("name")"#, "rust")
+        .unwrap();
+    assert_eq!(tokens[0][0].styles.len(), 2);
+
+    let html = highlighter
+        .code_to_html_with_options(
+            r#"object.get("name")"#,
+            "rust",
+            &HtmlOptions::default()
+                .default_theme("light")
+                .pre_class("code-block")
+                .code_class("language-rust")
+                .pre_attribute("data-language", "rust")
+                .without_line_wrapper(),
+        )
+        .unwrap();
+
+    assert!(html.contains("data-themes=\"dark light\""), "{html}");
+    assert!(html.contains("--dark:#a6e3a1"), "{html}");
+    assert!(html.contains("--light:#40a02b"), "{html}");
+    assert!(html.contains("color:var(--light)"), "{html}");
+    assert!(html.contains("class=\"shiki code-block\""), "{html}");
+    assert!(html.contains("class=\"language-rust\""), "{html}");
+    assert!(html.contains("data-language=\"rust\""), "{html}");
+    assert!(!html.contains("class=\"line\""), "{html}");
+}
+
+#[test]
+fn generated_items_are_reexported() {
+    assert_eq!(shiki_langs::RUST.id, "rust");
+    assert_eq!(shiki_themes::CATPPUCCIN_MOCHA.id, "catppuccin-mocha");
+}
+
+#[test]
+fn loads_runtime_json_and_raw_definitions() {
+    const GRAMMAR: &str = r#"{
+        "scopeName": "source.runtime",
+        "patterns": [{ "match": "\\bhello\\b", "name": "keyword.runtime" }]
+    }"#;
+    const THEME: &str = r##"{
+        "name": "runtime",
+        "settings": [
+            { "settings": { "foreground": "#ffffff", "background": "#000000" } },
+            { "scope": "keyword.runtime", "settings": { "foreground": "#ff0000" } }
+        ]
+    }"##;
+
+    let mut from_json = Highlighter::builder()
+        .json_language("runtime", GRAMMAR)
+        .unwrap()
+        .json_theme("runtime", THEME)
+        .unwrap()
+        .build()
+        .unwrap();
+    assert!(
+        from_json
+            .code_to_html("hello world", "runtime")
+            .unwrap()
+            .contains("#ff0000")
+    );
+
+    let grammar = shiki::RawGrammar::from_json("runtime", GRAMMAR).unwrap();
+    let theme = shiki::RawTheme::from_json("runtime", THEME).unwrap();
+    let mut from_raw = Highlighter::builder()
+        .raw_language("runtime", grammar)
+        .raw_theme("runtime", theme)
+        .build()
+        .unwrap();
+    assert!(
+        from_raw
+            .code_to_html("hello world", "source.runtime")
+            .unwrap()
+            .contains("#ff0000")
+    );
+}
+
+#[test]
+#[ignore = "expensive compatibility sweep; run explicitly before releases"]
+fn all_generated_grammars_compile_root_scanner() {
+    let ids: Vec<_> = shiki_langs::generated::ALL_LANGUAGES
+        .iter()
+        .map(|language| language.id)
+        .collect();
+    let mut highlighter = Highlighter::builder()
+        .bundle(&ALL_LANGUAGES)
+        .languages(ids.iter().copied())
+        .theme(&shiki_themes::generated::GITHUB_DARK)
+        .build()
+        .unwrap();
+
+    for id in ids {
+        highlighter
+            .tokenize_line("", id, None, true)
+            .unwrap_or_else(|error| panic!("{id}: {error}"));
+    }
+}

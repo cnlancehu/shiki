@@ -1,0 +1,18 @@
+{
+  "name": "shiki",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "bun run script/main.ts",
+    "fmt": "bun --bun oxfmt"
+  },
+  "dependencies": {
+    "tm-grammars": "1.31.15",
+    "tm-themes": "1.12.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "oxfmt": "^0.57.0",
+    "typescript": "^6.0.3"
+  }
+}

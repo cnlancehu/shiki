@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = ["shiki", "shiki-langs", "shiki-themes"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+version = "0.0.1"
+repository = "https://github.com/cnlancehu/shiki"
+
+[workspace.dependencies]
+onig_sys = { version = "69.9.3", default-features = false }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.18"
+
+shiki = { path = "shiki" }
+shiki-langs = { path = "shiki-langs" }
+shiki-themes = { path = "shiki-themes" }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
