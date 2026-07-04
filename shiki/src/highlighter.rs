@@ -27,6 +27,7 @@ pub struct HighlighterBuilder {
     languages: Vec<String>,
     runtime_languages: Vec<RawLanguage>,
     themes: Vec<(String, ThemeInput)>,
+    max_line_length: Option<usize>,
 }
 
 pub struct RawLanguage {
@@ -142,6 +143,7 @@ impl Highlighter {
             languages: Vec::new(),
             runtime_languages: Vec::new(),
             themes: Vec::new(),
+            max_line_length: None,
         }
     }
 
@@ -406,6 +408,16 @@ impl HighlighterBuilder {
         self
     }
 
+    pub fn max_tokenization_line_length(mut self, length: usize) -> Self {
+        self.max_line_length = Some(length);
+        self
+    }
+
+    pub fn unlimited_tokenization_line_length(mut self) -> Self {
+        self.max_line_length = None;
+        self
+    }
+
     pub fn theme(mut self, theme: &'static ThemeDefinition) -> Self {
         self.themes = vec![("default".to_owned(), ThemeInput::Definition(theme))];
         self
@@ -556,7 +568,11 @@ impl HighlighterBuilder {
                 .unwrap_or_default();
             let grammar = compile(scope_name, &grammars, injection_scopes)?;
             let index = tokenizers.len();
-            tokenizers.push(Tokenizer::new(grammar, theme_refs.clone()));
+            tokenizers.push(Tokenizer::new(
+                grammar,
+                theme_refs.clone(),
+                self.max_line_length,
+            ));
             languages.insert(id.clone(), index);
             languages.insert(scope_name.clone(), index);
             for alias in aliases {

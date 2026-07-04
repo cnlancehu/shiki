@@ -233,6 +233,43 @@ fn loads_runtime_json_and_raw_definitions() {
 }
 
 #[test]
+fn limits_pathological_long_lines() {
+    let source = "const value = items.map(item => item.name);";
+    let mut limited = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+        .max_tokenization_line_length(10)
+        .build()
+        .unwrap();
+    assert_eq!(
+        limited.code_to_scope_tokens(source, "rust").unwrap()[0].len(),
+        1
+    );
+
+    let mut unlimited = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+        .unlimited_tokenization_line_length()
+        .build()
+        .unwrap();
+    let unlimited_tokens = unlimited.code_to_scope_tokens(source, "rust").unwrap();
+    assert!(unlimited_tokens[0].len() > 1);
+
+    let mut default = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+        .build()
+        .unwrap();
+    assert_eq!(
+        default.code_to_scope_tokens(source, "rust").unwrap(),
+        unlimited_tokens
+    );
+}
+
+#[test]
 #[ignore = "expensive compatibility sweep; run explicitly before releases"]
 fn all_generated_grammars_compile_root_scanner() {
     let ids: Vec<_> = shiki_langs::generated::ALL_LANGUAGES

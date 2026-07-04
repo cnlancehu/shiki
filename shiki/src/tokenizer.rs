@@ -173,15 +173,42 @@ struct Scanner {
 
 impl Drop for Scanner {
     fn drop(&mut self) {
-        if !self.set.is_null() {
-            unsafe {
-                while onig_sys::onig_regset_number_of_regex(self.set) > 0 {
-                    onig_sys::onig_regset_replace(self.set, 0, ptr::null_mut());
-                }
-                onig_sys::onig_regset_free(self.set);
-            }
-        }
+        free_scanner_set(self.set);
     }
+}
+
+fn free_scanner_set(set: *mut onig_sys::OnigRegSet) {
+    if set.is_null() {
+        return;
+    }
+    unsafe {
+        while onig_sys::onig_regset_number_of_regex(set) > 0 {
+            onig_sys::onig_regset_replace(set, 0, ptr::null_mut());
+        }
+        onig_sys::onig_regset_free(set);
+    }
+}
+
+fn create_scanner_set(regexes: &[onig_sys::OnigRegex]) -> Result<*mut onig_sys::OnigRegSet> {
+    if regexes.is_empty() {
+        return Ok(ptr::null_mut());
+    }
+    let mut regexes = regexes.to_vec();
+    let mut set = ptr::null_mut();
+    let code = unsafe {
+        onig_sys::onig_regset_new(
+            &mut set,
+            regexes.len().try_into().expect("too many scanner patterns"),
+            regexes.as_mut_ptr(),
+        )
+    };
+    if code != onig_sys::ONIG_NORMAL as i32 {
+        return Err(Error::InvalidRegex {
+            pattern: "<scanner>".to_owned(),
+            message: onig_error(code, ptr::null_mut()),
+        });
+    }
+    Ok(set)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -218,10 +245,15 @@ pub(crate) struct Tokenizer {
     themes: Vec<ThemeMatcher>,
     style_rows: Vec<Style>,
     root_scope: ScopeStackId,
+    max_line_length: Option<usize>,
 }
 
 impl Tokenizer {
-    pub fn new(grammar: CompiledGrammar, themes: Vec<Arc<Theme>>) -> Self {
+    pub fn new(
+        grammar: CompiledGrammar,
+        themes: Vec<Arc<Theme>>,
+        max_line_length: Option<usize>,
+    ) -> Self {
         let mut scopes = ScopeArena::new();
         let root_scope = push_scope_name(
             &mut scopes,
@@ -251,6 +283,7 @@ impl Tokenizer {
             themes: themes.iter().map(Theme::matcher).collect(),
             style_rows: default_styles,
             root_scope,
+            max_line_length,
         }
     }
 
@@ -289,6 +322,22 @@ impl Tokenizer {
         if state.stack.is_empty() {
             state = self.initial_state();
         }
+        if self
+            .max_line_length
+            .is_some_and(|limit| line.len() > limit && line.chars().count() > limit)
+        {
+            let scopes = state
+                .stack
+                .last()
+                .map_or(self.root_scope, |frame| frame.content_scopes);
+            return Ok((
+                vec![ScopeToken {
+                    range: 0..line.len(),
+                    scopes,
+                }],
+                state,
+            ));
+        }
         let mut text = String::with_capacity(line.len() + 1);
         text.push_str(line);
         text.push('\n');
@@ -305,7 +354,7 @@ impl Tokenizer {
                 position,
             )?;
             let frame = state.stack.last().copied().expect("root frame");
-            let Some(action) = Self::find_next(
+            let Some(action) = self.find_next(
                 candidates,
                 &text,
                 position,
@@ -588,16 +637,16 @@ impl Tokenizer {
                 state.stack[frame_index].while_scanner = scanner;
                 scanner
             };
-            let scanner = &self.scanners[scanner as usize];
-            if Self::find_next(
-                scanner,
-                text,
-                *position,
-                is_first_line,
-                allow_g,
-                &mut captures,
-            )
-            .is_none()
+            if self
+                .find_next(
+                    scanner,
+                    text,
+                    *position,
+                    is_first_line,
+                    allow_g,
+                    &mut captures,
+                )
+                .is_none()
             {
                 state.stack.truncate(frame_index);
                 break;
@@ -636,9 +685,9 @@ impl Tokenizer {
         frame: &mut Frame,
         _is_first_line: bool,
         _position: usize,
-    ) -> Result<&Scanner> {
+    ) -> Result<ScannerId> {
         if frame.scanner != NO_SCANNER {
-            return Ok(&self.scanners[frame.scanner as usize]);
+            return Ok(frame.scanner);
         }
         let injection_set = self.injection_set(frame.content_scopes);
         let key = ScannerKey::State {
@@ -648,7 +697,7 @@ impl Tokenizer {
         };
         if let Some(scanner) = self.scanner_ids.get(&key).copied() {
             frame.scanner = scanner;
-            return Ok(&self.scanners[scanner as usize]);
+            return Ok(scanner);
         }
 
         let injections = self.injection_sets[injection_set as usize].clone();
@@ -705,7 +754,7 @@ impl Tokenizer {
         raw = left_injections;
         let scanner = self.compile_scanner(key, &raw)?;
         frame.scanner = scanner;
-        Ok(&self.scanners[scanner as usize])
+        Ok(scanner)
     }
 
     fn injection_set(&mut self, scopes: ScopeStackId) -> InjectionSetId {
@@ -807,20 +856,7 @@ impl Tokenizer {
             };
             regexes.push(regex);
         }
-        let mut set = ptr::null_mut();
-        let code = unsafe {
-            onig_sys::onig_regset_new(
-                &mut set,
-                regexes.len().try_into().expect("too many scanner patterns"),
-                regexes.as_mut_ptr(),
-            )
-        };
-        if code != onig_sys::ONIG_NORMAL as i32 {
-            return Err(Error::InvalidRegex {
-                pattern: "<scanner>".to_owned(),
-                message: onig_error(code, ptr::null_mut()),
-            });
-        }
+        let set = create_scanner_set(&regexes)?;
         let id = self.scanners.len() as ScannerId;
         self.scanners.push(Scanner {
             actions: patterns.iter().map(|(action, _)| *action).collect(),
@@ -831,53 +867,22 @@ impl Tokenizer {
     }
 
     fn find_next(
-        scanner: &Scanner,
+        &mut self,
+        scanner_id: ScannerId,
         text: &str,
         start: usize,
         allow_a: bool,
         allow_g: bool,
         captures: &mut Vec<Option<Range<usize>>>,
     ) -> Option<Action> {
-        if scanner.actions.is_empty() {
-            return None;
-        }
-        let bytes = text.as_bytes();
-        let mut match_position = 0;
-        let mut options = onig_sys::ONIG_OPTION_NONE;
-        if !allow_a {
-            options |= onig_sys::ONIG_OPTION_NOT_BEGIN_STRING;
-        }
-        if !allow_g {
-            options |= onig_sys::ONIG_OPTION_NOT_BEGIN_POSITION;
-        }
-        let index = unsafe {
-            onig_sys::onig_regset_search(
-                scanner.set,
-                bytes.as_ptr(),
-                bytes.as_ptr().add(bytes.len()),
-                bytes.as_ptr().add(start),
-                bytes.as_ptr().add(bytes.len()),
-                onig_sys::OnigRegSetLead_ONIG_REGSET_POSITION_LEAD,
-                options,
-                &mut match_position,
-            )
-        };
-        if index < 0 {
-            return None;
-        }
-        let region = unsafe { onig_sys::onig_regset_get_region(scanner.set, index) };
-        if region.is_null() {
-            return None;
-        }
-        let region = unsafe { &*region };
-        captures.clear();
-        captures.reserve(region.num_regs as usize);
-        for capture in 0..region.num_regs as usize {
-            let begin = unsafe { *region.beg.add(capture) };
-            let end = unsafe { *region.end.add(capture) };
-            captures.push((begin >= 0 && end >= 0).then_some(begin as usize..end as usize));
-        }
-        Some(scanner.actions[index as usize])
+        find_next_regset(
+            &self.scanners[scanner_id as usize],
+            text,
+            start,
+            allow_a,
+            allow_g,
+            captures,
+        )
     }
 
     fn apply_retokenizations(
@@ -912,6 +917,101 @@ impl Tokenizer {
             replace_range(tokens, task.range, replacement);
         }
         Ok(())
+    }
+}
+
+fn scanner_options(allow_a: bool, allow_g: bool) -> onig_sys::OnigOptionType {
+    let mut options = onig_sys::ONIG_OPTION_NONE;
+    if !allow_a {
+        options |= onig_sys::ONIG_OPTION_NOT_BEGIN_STRING;
+    }
+    if !allow_g {
+        options |= onig_sys::ONIG_OPTION_NOT_BEGIN_POSITION;
+    }
+    options
+}
+
+fn find_next_regset(
+    scanner: &Scanner,
+    text: &str,
+    start: usize,
+    allow_a: bool,
+    allow_g: bool,
+    captures: &mut Vec<Option<Range<usize>>>,
+) -> Option<Action> {
+    if scanner.actions.is_empty() {
+        return None;
+    }
+    let mut chunk_start = start;
+    let mut options = scanner_options(allow_a, allow_g);
+    loop {
+        let mut chunk_end = if text.len() < 1_000 {
+            text.len()
+        } else {
+            (chunk_start + 64).min(text.len())
+        };
+        while chunk_end < text.len() && !text.is_char_boundary(chunk_end) {
+            chunk_end += 1;
+        }
+        if let Some((index, region)) = search_regset(
+            scanner.set,
+            text.as_bytes(),
+            chunk_start,
+            chunk_end,
+            options,
+        ) {
+            copy_captures(region, captures);
+            return Some(scanner.actions[index]);
+        }
+        if chunk_end == text.len() {
+            return None;
+        }
+        chunk_start = chunk_end;
+        options |= onig_sys::ONIG_OPTION_NOT_BEGIN_POSITION;
+    }
+}
+
+fn search_regset(
+    set: *mut onig_sys::OnigRegSet,
+    text: &[u8],
+    start: usize,
+    range: usize,
+    options: onig_sys::OnigOptionType,
+) -> Option<(usize, *mut onig_sys::OnigRegion)> {
+    if set.is_null() {
+        return None;
+    }
+    let mut match_position = 0;
+    let index = unsafe {
+        onig_sys::onig_regset_search(
+            set,
+            text.as_ptr(),
+            text.as_ptr().add(text.len()),
+            text.as_ptr().add(start),
+            text.as_ptr().add(range),
+            onig_sys::OnigRegSetLead_ONIG_REGSET_POSITION_LEAD,
+            options,
+            &mut match_position,
+        )
+    };
+    if index < 0 {
+        return None;
+    }
+    let region = unsafe { onig_sys::onig_regset_get_region(set, index) };
+    if region.is_null() {
+        return None;
+    }
+    Some((index as usize, region))
+}
+
+fn copy_captures(region: *const onig_sys::OnigRegion, captures: &mut Vec<Option<Range<usize>>>) {
+    let region = unsafe { &*region };
+    captures.clear();
+    captures.reserve(region.num_regs as usize);
+    for capture in 0..region.num_regs as usize {
+        let begin = unsafe { *region.beg.add(capture) };
+        let end = unsafe { *region.end.add(capture) };
+        captures.push((begin >= 0 && end >= 0).then_some(begin as usize..end as usize));
     }
 }
 

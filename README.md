@@ -91,3 +91,8 @@ theme declarations are emitted.
 
 Reuse a `Highlighter` whenever possible. Compiled scanners, regexes, scope
 transitions, injection results, and style rows are cached on first use.
+
+Long lines are fully tokenized by default. Applications that prefer bounded
+runtime over complete highlighting can opt into a fallback with
+`max_tokenization_line_length`; lines above that limit are returned as one
+token while preserving the grammar state.
