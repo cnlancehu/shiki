@@ -1,31 +1,21 @@
 # Shiki for Rust
 
+<p align="center">
+  <a href="https://crates.io/crates/shiki"><img alt="Crates.io" src="https://img.shields.io/crates/v/shiki"></a>
+</p>
+
 **_Highly Experimental !!_**
 
 A native Rust implementation of Shiki's TextMate highlighting model. It uses
 Oniguruma directly, supports embedded grammars and injection selectors, and
 keeps runtime scope, grammar, theme, and color data behind compact numeric IDs.
 
-## Building from Source
-
-Bundled language/theme assets and their Rust indexes are generated locally and
-ignored by Git. Generate them before the first Cargo build, and again whenever
-the pinned `tm-grammars` or `tm-themes` version changes:
-
-```console
-bun install --frozen-lockfile
-bun run generate
-```
-
-The `shiki-langs` and `shiki-themes` Cargo manifests explicitly include these
-ignored outputs when crates are packaged for publication.
-
 ## Quick Start
 
 The root example bundles only Rust and renders highlighted HTML:
 
 ```console
-cargo run --release -p shiki-langs --example basic
+cargo add shiki shiki-langs shiki-themes
 ```
 
 Its essential setup is:
@@ -42,7 +32,6 @@ let mut highlighter = Highlighter::builder()
     .build()?;
 
 let html = highlighter.code_to_html("let answer = 91;", "rust")?;
-# Ok::<(), shiki::Error>(())
 ```
 
 `languages!` resolves and embeds transitive dependencies at compile time. For
@@ -59,7 +48,6 @@ let highlighter = Highlighter::builder()
     .json_language("custom", grammar_json)?
     .json_theme("custom", theme_json)?
     .build()?;
-# Ok::<(), shiki::Error>(())
 ```
 
 To parse or construct definitions separately, use `RawGrammar::from_json` and
@@ -93,7 +81,6 @@ let mut highlighter = Highlighter::builder()
     .build()?;
 
 let html = highlighter.code_to_html("let themed = true;", "rust")?;
-# Ok::<(), shiki::Error>(())
 ```
 
 Each token contains variables such as `--dark` and `--light`, plus corresponding
@@ -128,7 +115,6 @@ let engine = Highlighter::builder()
 let mut session = engine.session("rust")?;
 let mut state = session.initial_state();
 let tokens = session.tokenize_line("let value = 1;", &mut state, true)?;
-# Ok::<(), shiki::Error>(())
 ```
 
 Legacy `Highlighter` values can release their accumulated dynamic caches with
