@@ -209,6 +209,7 @@ type ScannerPattern = (Action, ScannerPatternRef);
 
 struct Scanner {
     actions: Vec<Action>,
+    leading_literals: Vec<Box<[u8]>>,
     set: *mut onig_sys::OnigRegSet,
     match_params: Vec<*mut onig_sys::OnigMatchParam>,
 }
@@ -868,6 +869,8 @@ impl Tokenizer {
         left_injections.extend(raw);
         left_injections.extend(other_injections);
         raw = left_injections;
+        let mut seen_patterns = HashSet::with_capacity(raw.len());
+        raw.retain(|(_, pattern)| seen_patterns.insert(*pattern));
         let scanner = self.compile_scanner(key, &raw)?;
         frame.scanner = scanner;
         Ok(scanner)
@@ -930,6 +933,7 @@ impl Tokenizer {
             let id = self.scanners.len() as ScannerId;
             self.scanners.push(Scanner {
                 actions: Vec::new(),
+                leading_literals: Vec::new(),
                 set: ptr::null_mut(),
                 match_params: Vec::new(),
             });
@@ -938,12 +942,22 @@ impl Tokenizer {
         }
         initialize_oniguruma();
         let mut regexes = Vec::with_capacity(patterns.len());
+        let mut leading_literals = Vec::new();
+        let mut collect_leading_literals = true;
         for (_, pattern_ref) in patterns {
             let pattern = match pattern_ref {
                 ScannerPatternRef::Grammar(id) => &self.grammar.patterns[*id as usize],
                 ScannerPatternRef::Dynamic(id) => &self.patterns[*id as usize],
                 ScannerPatternRef::Empty => "",
             };
+            if collect_leading_literals {
+                // A matching literal in this priority prefix wins over every later rule.
+                if let Some(literal) = exact_regex_literal(pattern) {
+                    leading_literals.push(literal);
+                } else {
+                    collect_leading_literals = false;
+                }
+            }
             let regex = if let Some(id) = self.regex_ids.get(pattern_ref) {
                 self.regexes[*id as usize]
             } else {
@@ -985,6 +999,7 @@ impl Tokenizer {
         let id = self.scanners.len() as ScannerId;
         self.scanners.push(Scanner {
             actions: patterns.iter().map(|(action, _)| *action).collect(),
+            leading_literals,
             set,
             match_params,
         });
@@ -1058,6 +1073,51 @@ fn scanner_options(allow_a: bool, allow_g: bool) -> onig_sys::OnigOptionType {
     options
 }
 
+fn exact_regex_literal(pattern: &str) -> Option<Box<[u8]>> {
+    if pattern.is_empty() {
+        return None;
+    }
+    let mut literal = Vec::with_capacity(pattern.len());
+    let mut chars = pattern.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' => {
+                return None;
+            }
+            '\\' => {
+                let escaped = chars.next()?;
+                if !matches!(
+                    escaped,
+                    '\\' | '.'
+                        | '^'
+                        | '$'
+                        | '*'
+                        | '+'
+                        | '?'
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '|'
+                        | '/'
+                        | '-'
+                ) {
+                    return None;
+                }
+                let mut buffer = [0; 4];
+                literal.extend_from_slice(escaped.encode_utf8(&mut buffer).as_bytes());
+            }
+            literal_char => {
+                let mut buffer = [0; 4];
+                literal.extend_from_slice(literal_char.encode_utf8(&mut buffer).as_bytes());
+            }
+        }
+    }
+    Some(literal.into_boxed_slice())
+}
+
 fn find_next_regset(
     scanner: &mut Scanner,
     text: &str,
@@ -1068,6 +1128,14 @@ fn find_next_regset(
 ) -> Result<Option<Action>> {
     if scanner.actions.is_empty() {
         return Ok(None);
+    }
+    // Adjacent delimiters and punctuation can bypass the multi-regex engine entirely.
+    for (index, literal) in scanner.leading_literals.iter().enumerate() {
+        if text.as_bytes()[start..].starts_with(literal) {
+            captures.clear();
+            captures.push(Some(start..start + literal.len()));
+            return Ok(Some(scanner.actions[index]));
+        }
     }
     let mut chunk_start = start;
     let mut options = scanner_options(allow_a, allow_g);
@@ -1504,5 +1572,27 @@ fn onig_error(code: i32, error_info: *mut onig_sys::OnigErrorInfo) -> String {
         CStr::from_ptr(buffer.as_ptr().cast())
             .to_string_lossy()
             .into_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exact_regex_literal;
+
+    #[test]
+    fn recognizes_only_exact_regex_literals() {
+        assert_eq!(exact_regex_literal("=>").as_deref(), Some(b"=>".as_slice()));
+        assert_eq!(
+            exact_regex_literal(r"\}\[\\").as_deref(),
+            Some(b"}[\\".as_slice())
+        );
+        assert_eq!(
+            exact_regex_literal("你好").as_deref(),
+            Some("你好".as_bytes())
+        );
+
+        for pattern in ["", r"\d", ".", "a+", "^value", "(value)", "[ab]"] {
+            assert!(exact_regex_literal(pattern).is_none(), "{pattern}");
+        }
     }
 }
