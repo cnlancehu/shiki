@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -100,7 +101,7 @@ pub(crate) struct ScopeTemplate {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) enum ScopePart {
-    Literal(String),
+    Literal(Arc<str>),
     Capture(usize),
 }
 
@@ -151,10 +152,10 @@ pub(crate) struct CompiledGrammar {
     pub root_scope_name: ScopeNameId,
     pub root: RuleId,
     pub rules: Vec<Rule>,
-    pub patterns: Vec<String>,
+    pub patterns: Vec<Arc<str>>,
     pub scope_names: Vec<ScopeName>,
     pub scope_templates: Vec<ScopeTemplate>,
-    pub injection_selectors: Vec<String>,
+    pub injection_selectors: Vec<Arc<str>>,
     pub injections: Vec<Injection>,
 }
 
@@ -231,8 +232,8 @@ struct Compiler<'a> {
     roots: HashMap<(String, String), RuleId>,
     raw_cache: HashMap<(usize, String, String), RuleId>,
     injections: Vec<Injection>,
-    patterns: Vec<String>,
-    pattern_ids: HashMap<String, PatternSourceId>,
+    patterns: Vec<Arc<str>>,
+    pattern_ids: HashMap<Arc<str>, PatternSourceId>,
     scope_names: Vec<ScopeName>,
     scope_name_ids: HashMap<String, ScopeNameId>,
     scope_templates: Vec<ScopeTemplate>,
@@ -454,10 +455,11 @@ impl<'a> Compiler<'a> {
     }
 
     fn intern_pattern(&mut self, pattern: String) -> PatternSourceId {
-        if let Some(id) = self.pattern_ids.get(&pattern) {
+        if let Some(id) = self.pattern_ids.get(pattern.as_str()) {
             return *id;
         }
         let id = self.patterns.len() as PatternSourceId;
+        let pattern: Arc<str> = Arc::from(pattern);
         self.patterns.push(pattern.clone());
         self.pattern_ids.insert(pattern, id);
         id
@@ -498,7 +500,7 @@ fn parse_scope_template(scope: &str) -> Vec<ScopePart> {
     while index < bytes.len() {
         if bytes[index] == b'$' && index + 1 < bytes.len() && bytes[index + 1].is_ascii_digit() {
             if start < index {
-                parts.push(ScopePart::Literal(scope[start..index].to_owned()));
+                parts.push(ScopePart::Literal(Arc::from(&scope[start..index])));
             }
             parts.push(ScopePart::Capture((bytes[index + 1] - b'0') as usize));
             index += 2;
@@ -508,7 +510,7 @@ fn parse_scope_template(scope: &str) -> Vec<ScopePart> {
         }
     }
     if start < scope.len() {
-        parts.push(ScopePart::Literal(scope[start..].to_owned()));
+        parts.push(ScopePart::Literal(Arc::from(&scope[start..])));
     }
     parts
 }

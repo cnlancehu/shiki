@@ -24,8 +24,8 @@ pub struct ScopeToken {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThemedToken {
     pub content: String,
-    pub color: String,
-    pub background: Option<String>,
+    pub color: Arc<str>,
+    pub background: Option<Arc<str>>,
     pub font_style: FontStyle,
     pub scopes: ScopeStackId,
 }
@@ -33,8 +33,8 @@ pub struct ThemedToken {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThemeTokenStyle {
     pub theme: ThemeId,
-    pub color: String,
-    pub background: Option<String>,
+    pub color: Arc<str>,
+    pub background: Option<Arc<str>>,
     pub font_style: FontStyle,
 }
 
@@ -44,6 +44,19 @@ pub type ThemeId = u16;
 pub struct RegexLimits {
     pub match_retry_limit: u64,
     pub search_retry_limit: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TokenizerCacheStats {
+    pub scanners: usize,
+    pub regexes: usize,
+    pub dynamic_patterns: usize,
+    pub scope_values: usize,
+    pub scope_stacks: usize,
+    pub capture_values: usize,
+    pub injection_sets: usize,
+    pub style_rows: usize,
+    pub reusable_buffer_bytes: usize,
 }
 
 impl Default for RegexLimits {
@@ -73,7 +86,7 @@ const NO_SCANNER: ScannerId = ScannerId::MAX;
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct ScopeValue {
     template: ScopeTemplateId,
-    captures: Box<[CaptureValueId]>,
+    captures: Arc<[CaptureValueId]>,
 }
 
 struct ScopeNode {
@@ -85,8 +98,8 @@ struct ScopeNode {
 struct ScopeArena {
     scope_ids: HashMap<ScopeValue, ScopeId>,
     values: Vec<ScopeValue>,
-    capture_ids: HashMap<String, CaptureValueId>,
-    captures: Vec<String>,
+    capture_ids: HashMap<Arc<str>, CaptureValueId>,
+    captures: Vec<Arc<str>>,
     nodes: Vec<ScopeNode>,
     parents: Vec<ScopeStackId>,
     transitions: HashMap<(ScopeStackId, ScopeId), ScopeStackId>,
@@ -113,7 +126,7 @@ impl ScopeArena {
         &mut self,
         parent: ScopeStackId,
         template: ScopeTemplateId,
-        captures: Box<[CaptureValueId]>,
+        captures: Arc<[CaptureValueId]>,
     ) -> ScopeStackId {
         let value = ScopeValue { template, captures };
         let scope_id = if let Some(id) = self.scope_ids.get(&value) {
@@ -154,8 +167,9 @@ impl ScopeArena {
             return *id;
         }
         let id = self.captures.len() as CaptureValueId;
-        self.captures.push(value.to_owned());
-        self.capture_ids.insert(value.to_owned(), id);
+        let value: Arc<str> = Arc::from(value);
+        self.captures.push(value.clone());
+        self.capture_ids.insert(value, id);
         id
     }
 }
@@ -184,7 +198,7 @@ enum Action {
     End,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ScannerPatternRef {
     Grammar(u32),
     Dynamic(PatternId),
@@ -297,17 +311,19 @@ pub(crate) struct Tokenizer {
     regex_limits: RegexLimits,
     scanner_ids: HashMap<ScannerKey, ScannerId>,
     scanners: Vec<Scanner>,
-    regex_ids: HashMap<String, u32>,
+    regex_ids: HashMap<ScannerPatternRef, u32>,
     regexes: Vec<onig_sys::OnigRegex>,
-    pattern_ids: HashMap<String, PatternId>,
-    patterns: Vec<String>,
-    injection_set_ids: HashMap<Vec<(bool, RuleId)>, InjectionSetId>,
-    injection_sets: Vec<Vec<(bool, RuleId)>>,
+    pattern_ids: HashMap<Arc<str>, PatternId>,
+    patterns: Vec<Arc<str>>,
+    injection_set_ids: HashMap<Arc<[(bool, RuleId)]>, InjectionSetId>,
+    injection_sets: Vec<Arc<[(bool, RuleId)]>>,
     injection_scope_matches: Vec<Box<[bool]>>,
     scopes: ScopeArena,
     themes: Vec<ThemeMatcher>,
     style_rows: Vec<Style>,
     root_scope: ScopeStackId,
+    line_buffers: Vec<String>,
+    capture_buffers: Vec<Vec<Option<Range<usize>>>>,
 }
 
 impl Tokenizer {
@@ -328,7 +344,7 @@ impl Tokenizer {
             "",
         );
         let mut injection_set_ids = HashMap::new();
-        injection_set_ids.insert(Vec::new(), 0);
+        injection_set_ids.insert(Arc::from([]), 0);
         let theme_count = themes.len();
         let default_styles = vec![Style::default(); theme_count];
         Self {
@@ -342,12 +358,14 @@ impl Tokenizer {
             pattern_ids: HashMap::new(),
             patterns: Vec::new(),
             injection_set_ids,
-            injection_sets: vec![Vec::new()],
+            injection_sets: vec![Arc::from([])],
             injection_scope_matches: Vec::new(),
             scopes,
             themes: themes.iter().map(Theme::matcher).collect(),
             style_rows: default_styles,
             root_scope,
+            line_buffers: Vec::new(),
+            capture_buffers: Vec::new(),
         }
     }
 
@@ -364,6 +382,30 @@ impl Tokenizer {
                 scanner: NO_SCANNER,
                 while_scanner: NO_SCANNER,
             }],
+        }
+    }
+
+    pub fn cache_stats(&self) -> TokenizerCacheStats {
+        let line_bytes = self
+            .line_buffers
+            .iter()
+            .map(String::capacity)
+            .sum::<usize>();
+        let capture_bytes = self
+            .capture_buffers
+            .iter()
+            .map(|buffer| buffer.capacity() * std::mem::size_of::<Option<Range<usize>>>())
+            .sum::<usize>();
+        TokenizerCacheStats {
+            scanners: self.scanners.len(),
+            regexes: self.regexes.len(),
+            dynamic_patterns: self.patterns.len(),
+            scope_values: self.scopes.values.len(),
+            scope_stacks: self.scopes.nodes.len(),
+            capture_values: self.scopes.captures.len(),
+            injection_sets: self.injection_sets.len(),
+            style_rows: self.style_rows.len(),
+            reusable_buffer_bytes: line_bytes + capture_bytes,
         }
     }
 
@@ -391,14 +433,23 @@ impl Tokenizer {
             state = self.initial_state();
         }
 
-        let mut text = String::with_capacity(line.len() + 1);
+        let mut text = self.line_buffers.pop().unwrap_or_default();
+        text.clear();
+        text.reserve(line.len() + 1);
         text.push_str(line);
         text.push('\n');
         let mut position = 0;
 
-        self.check_while_conditions(&text, &mut position, &mut state, &mut tokens, is_first_line)?;
+        let mut captures = self.capture_buffers.pop().unwrap_or_default();
+        self.check_while_conditions(
+            &text,
+            &mut position,
+            &mut state,
+            &mut tokens,
+            is_first_line,
+            &mut captures,
+        )?;
         let mut zero_width_states = HashSet::new();
-        let mut captures = Vec::new();
 
         while position < text.len() {
             let candidates = self.candidates(
@@ -617,6 +668,8 @@ impl Tokenizer {
         for token in tokens.iter_mut() {
             token.range.end = token.range.end.min(line.len());
         }
+        self.capture_buffers.push(captures);
+        self.line_buffers.push(text);
         Ok((tokens, state))
     }
 
@@ -625,6 +678,10 @@ impl Tokenizer {
         let theme_count = self.themes.len();
         let start = stack as usize * theme_count;
         &self.style_rows[start..start + theme_count]
+    }
+
+    pub(crate) fn contains_scope_stack(&self, stack: ScopeStackId) -> bool {
+        (stack as usize) < self.scopes.nodes.len()
     }
 
     pub(crate) fn scope_names(&self, stack: ScopeStackId) -> Result<Vec<String>> {
@@ -675,8 +732,8 @@ impl Tokenizer {
         state: &mut GrammarState,
         tokens: &mut Vec<ScopeToken>,
         is_first_line: bool,
+        captures: &mut Vec<Option<Range<usize>>>,
     ) -> Result<()> {
-        let mut captures = Vec::new();
         let mut index = 0;
         while index < state.stack.len() {
             let frame = state.stack[index];
@@ -704,14 +761,7 @@ impl Tokenizer {
                 scanner
             };
             if self
-                .find_next(
-                    scanner,
-                    text,
-                    *position,
-                    is_first_line,
-                    allow_g,
-                    &mut captures,
-                )?
+                .find_next(scanner, text, *position, is_first_line, allow_g, captures)?
                 .is_none()
             {
                 state.stack.truncate(frame_index);
@@ -732,7 +782,7 @@ impl Tokenizer {
                     &self.grammar.scope_names,
                     &self.grammar.scope_templates,
                     tokens,
-                    &captures,
+                    captures,
                     frame.content_scopes,
                     None,
                     while_captures,
@@ -805,7 +855,7 @@ impl Tokenizer {
         }
         let mut left_injections = Vec::new();
         let mut other_injections = Vec::new();
-        for (is_left, rule) in injections {
+        for &(is_left, rule) in injections.iter() {
             {
                 let target = if is_left {
                     &mut left_injections
@@ -855,10 +905,11 @@ impl Tokenizer {
                 )
             })
             .collect();
-        let id = if let Some(id) = self.injection_set_ids.get(&injections) {
+        let id = if let Some(id) = self.injection_set_ids.get(injections.as_slice()) {
             *id
         } else {
             let id = self.injection_sets.len() as InjectionSetId;
+            let injections: Arc<[(bool, RuleId)]> = Arc::from(injections);
             self.injection_sets.push(injections.clone());
             self.injection_set_ids.insert(injections, id);
             id
@@ -893,7 +944,7 @@ impl Tokenizer {
                 ScannerPatternRef::Dynamic(id) => &self.patterns[*id as usize],
                 ScannerPatternRef::Empty => "",
             };
-            let regex = if let Some(id) = self.regex_ids.get(pattern) {
+            let regex = if let Some(id) = self.regex_ids.get(pattern_ref) {
                 self.regexes[*id as usize]
             } else {
                 let mut regex = ptr::null_mut();
@@ -918,7 +969,7 @@ impl Tokenizer {
                 }
                 let id = self.regexes.len() as u32;
                 self.regexes.push(regex);
-                self.regex_ids.insert(pattern.to_owned(), id);
+                self.regex_ids.insert(*pattern_ref, id);
                 regex
             };
             regexes.push(regex);
@@ -1107,16 +1158,17 @@ impl Drop for Tokenizer {
 }
 
 fn intern_pattern(
-    pattern_ids: &mut HashMap<String, PatternId>,
-    patterns: &mut Vec<String>,
+    pattern_ids: &mut HashMap<Arc<str>, PatternId>,
+    patterns: &mut Vec<Arc<str>>,
     pattern: &str,
 ) -> PatternId {
     if let Some(id) = pattern_ids.get(pattern) {
         return *id;
     }
     let id = patterns.len() as PatternId;
-    patterns.push(pattern.to_owned());
-    pattern_ids.insert(pattern.to_owned(), id);
+    let pattern: Arc<str> = Arc::from(pattern);
+    patterns.push(pattern.clone());
+    pattern_ids.insert(pattern, id);
     id
 }
 
@@ -1383,10 +1435,10 @@ fn scope_chunks<'a>(
         .parts
         .iter()
         .map(|part| match part {
-            ScopePart::Literal(value) => value.as_str(),
+            ScopePart::Literal(value) => value.as_ref(),
             ScopePart::Capture(_) => {
                 let capture = captures.next().expect("compiled scope capture");
-                arena.captures[*capture as usize].as_str()
+                arena.captures[*capture as usize].as_ref()
             }
         })
         .collect()

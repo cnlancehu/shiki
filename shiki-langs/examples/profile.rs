@@ -55,10 +55,20 @@ fn main() {
     let themed_tokens = highlighter.code_to_tokens(jquery, "javascript").unwrap();
     let themed = started.elapsed();
     std::hint::black_box(themed_tokens);
+    let cache = highlighter.cache_stats("javascript").unwrap().unwrap();
 
     println!(
-        "build={built:?} cached_build={cached_build:?} cold_html={cold_html:?} tokenize={tokenized:?} cached_tokenize={cached_tokenized:?} themed={themed:?} lines={} tokens={token_count} html_bytes={}",
+        "build={built:?} cached_build={cached_build:?} cold_html={cold_html:?} tokenize={tokenized:?} cached_tokenize={cached_tokenized:?} themed={themed:?} lines={} tokens={token_count} html_bytes={} scanners={} regexes={} dynamic_patterns={} scope_stacks={} capture_values={} style_rows={} reusable_buffer_bytes={} themed_token_bytes={} theme_style_bytes={}",
         tokens.len(),
         html.len(),
+        cache.scanners,
+        cache.regexes,
+        cache.dynamic_patterns,
+        cache.scope_stacks,
+        cache.capture_values,
+        cache.style_rows,
+        cache.reusable_buffer_bytes,
+        std::mem::size_of::<shiki::ThemedToken>(),
+        std::mem::size_of::<shiki::ThemeTokenStyle>(),
     );
 }

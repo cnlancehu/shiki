@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,8 +28,8 @@ pub(crate) type SelectorId = u32;
 
 #[derive(Default)]
 pub(crate) struct SelectorSymbols {
-    ids: HashMap<String, SelectorId>,
-    pub values: Vec<String>,
+    ids: HashMap<Arc<str>, SelectorId>,
+    pub values: Vec<Arc<str>>,
 }
 
 impl ScopeSelector {
@@ -176,8 +177,9 @@ impl SelectorSymbols {
             return *id;
         }
         let id = self.values.len() as SelectorId;
-        self.values.push(value.to_owned());
-        self.ids.insert(value.to_owned(), id);
+        let value: Arc<str> = Arc::from(value);
+        self.values.push(value.clone());
+        self.ids.insert(value, id);
         id
     }
 }

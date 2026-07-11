@@ -196,6 +196,47 @@ fn renders_multiple_themes_as_css_variables() {
 }
 
 #[test]
+fn renderer_trait_supports_custom_outputs() {
+    struct ScopeCount;
+
+    impl shiki::Renderer for ScopeCount {
+        type Output = usize;
+
+        fn render(
+            &mut self,
+            highlighter: &mut Highlighter,
+            code: &str,
+            language: &str,
+        ) -> shiki::Result<Self::Output> {
+            Ok(highlighter
+                .code_to_scope_tokens(code, language)?
+                .iter()
+                .map(Vec::len)
+                .sum())
+        }
+    }
+
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .theme(&shiki_themes::generated::GITHUB_DARK)
+        .build()
+        .unwrap();
+    let count = highlighter
+        .render("let value = 1;", "rust", &mut ScopeCount)
+        .unwrap();
+    assert!(count > 1);
+
+    let expected = highlighter.code_to_html("let value = 1;", "rust").unwrap();
+    let options = HtmlOptions::default();
+    let mut html = shiki::HtmlRenderer::new(&options);
+    let actual = highlighter
+        .render("let value = 1;", "rust", &mut html)
+        .unwrap();
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn generated_items_are_reexported() {
     assert_eq!(shiki_langs::RUST.id, "rust");
     assert_eq!(shiki_themes::CATPPUCCIN_MOCHA.id, "catppuccin-mocha");
@@ -281,6 +322,28 @@ fn shared_engine_creates_isolated_sessions() {
         .unwrap();
     assert!(!first_tokens.is_empty());
     assert!(second_tokens.len() > 1);
+}
+
+#[test]
+fn highlighter_initializes_language_caches_lazily() {
+    let engine = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust", "astro"])
+        .theme(&shiki_themes::generated::GITHUB_DARK)
+        .build_engine()
+        .unwrap();
+    let mut highlighter = engine.highlighter();
+    assert_eq!(highlighter.initialized_language_count(), 0);
+    highlighter
+        .tokenize_line("let value = 1;", "rust", None, true)
+        .unwrap();
+    assert_eq!(highlighter.initialized_language_count(), 1);
+    assert!(highlighter.is_language_initialized("rust").unwrap());
+    assert!(!highlighter.is_language_initialized("astro").unwrap());
+    let stats = highlighter.cache_stats("rust").unwrap().unwrap();
+    assert!(stats.scanners > 0);
+    assert!(stats.regexes > 0);
+    assert!(stats.reusable_buffer_bytes > 0);
 }
 
 #[test]

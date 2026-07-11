@@ -15,6 +15,8 @@ pub enum Error {
     InvalidScopeStack(u32),
     #[error("theme `{0}` is not present in this bundle")]
     ThemeNotBundled(String),
+    #[error("theme ID {0} does not belong to this highlighter")]
+    InvalidThemeId(u16),
     #[error("invalid grammar JSON for `{name}`: {source}")]
     InvalidGrammar {
         name: String,

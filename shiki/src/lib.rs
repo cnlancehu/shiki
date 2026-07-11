@@ -64,6 +64,22 @@
 //! assert!(!tokens.is_empty());
 //! # Ok::<(), shiki::Error>(())
 //! ```
+//!
+//! # Custom output formats
+//!
+//! [`Renderer`] separates tokenization from output selection. [`HtmlRenderer`] is the
+//! built-in streaming implementation; additional renderers can choose the scope-token or
+//! themed-token APIs depending on whether they need borrowed styles or owned output.
+//!
+//! ```ignore
+//! use shiki::{Highlighter, HtmlOptions, HtmlRenderer};
+//!
+//! # let mut highlighter: Highlighter = todo!();
+//! let options = HtmlOptions::default().without_line_wrapper();
+//! let mut renderer = HtmlRenderer::new(&options);
+//! let html = highlighter.render("let value = 1", "rust", &mut renderer)?;
+//! # Ok::<(), shiki::Error>(())
+//! ```
 
 mod definition;
 mod error;
@@ -80,12 +96,12 @@ pub use definition::{
 pub use error::{Error, Result};
 pub use grammar::{RawGrammar, RawRule};
 pub use highlighter::{
-    Highlighter, HighlighterBuilder, HighlighterEngine, HtmlOptions, LanguageInput,
-    LanguageSession, ThemeInput,
+    Highlighter, HighlighterBuilder, HighlighterEngine, HtmlOptions, HtmlRenderer, LanguageInput,
+    LanguageSession, Renderer, ResolvedStyle, ThemeInput,
 };
 pub use raw::{RawList, RawMap, RawMapEntry, RawString};
 pub use theme::{FontStyle, RawTheme, RawThemeRule, RawThemeScope, RawThemeSettings, Theme};
 pub use tokenizer::{
     GrammarState, MultiThemedToken, RegexLimits, ScopeStackId, ScopeToken, ThemeId,
-    ThemeTokenStyle, ThemedToken,
+    ThemeTokenStyle, ThemedToken, TokenizerCacheStats,
 };

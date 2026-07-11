@@ -10,8 +10,8 @@ use crate::error::{Error, Result};
 use crate::grammar::{RawGrammar, compile};
 use crate::theme::{FontStyle, RawTheme, Style, Theme};
 use crate::tokenizer::{
-    GrammarState, MultiThemedToken, RegexLimits, ScopeToken, ThemeTokenStyle, ThemedToken,
-    Tokenizer,
+    GrammarState, MultiThemedToken, RegexLimits, ScopeToken, ThemeId, ThemeTokenStyle, ThemedToken,
+    Tokenizer, TokenizerCacheStats,
 };
 
 #[derive(Clone)]
@@ -60,13 +60,49 @@ pub struct LanguageSession {
     tokenizer: Tokenizer,
 }
 
+/// Renders highlighted source code into a concrete output format.
+///
+/// Renderers may use the high-level token APIs on [`Highlighter`]. Renderers
+/// implemented by this crate can additionally use its streaming internals to
+/// avoid materializing owned tokens.
+pub trait Renderer {
+    type Output;
+
+    fn render(
+        &mut self,
+        highlighter: &mut Highlighter,
+        code: &str,
+        language: &str,
+    ) -> Result<Self::Output>;
+}
+
+/// Streaming HTML renderer used by [`Highlighter::code_to_html`].
+pub struct HtmlRenderer<'a> {
+    pub options: &'a HtmlOptions,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedStyle<'a> {
+    pub color: &'a str,
+    pub background: Option<&'a str>,
+    pub font_style: FontStyle,
+}
+
+impl<'a> HtmlRenderer<'a> {
+    pub const fn new(options: &'a HtmlOptions) -> Self {
+        Self { options }
+    }
+
+    pub const fn options(&self) -> &HtmlOptions {
+        self.options
+    }
+}
+
 static NEXT_GRAMMAR_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct Highlighter {
     engine: HighlighterEngine,
-    languages: HashMap<String, usize>,
-    tokenizers: Vec<Tokenizer>,
-    themes: Vec<NamedTheme>,
+    tokenizers: Vec<Option<Tokenizer>>,
 }
 
 pub struct HighlighterBuilder {
@@ -75,6 +111,12 @@ pub struct HighlighterBuilder {
     runtime_languages: Vec<LanguageInput>,
     themes: Vec<(String, ThemeInput)>,
     regex_limits: RegexLimits,
+}
+
+impl Default for HighlighterBuilder {
+    fn default() -> Self {
+        Highlighter::builder()
+    }
 }
 
 pub struct LanguageInput {
@@ -206,35 +248,85 @@ impl Highlighter {
         }
     }
 
+    pub const fn engine(&self) -> &HighlighterEngine {
+        &self.engine
+    }
+
     pub fn theme_names(&self) -> impl Iterator<Item = &str> {
-        self.themes.iter().map(|theme| theme.name.as_str())
+        self.engine.theme_names()
     }
 
     pub fn theme_name(&self, theme: crate::tokenizer::ThemeId) -> Option<&str> {
-        self.themes
+        self.engine
+            .inner
+            .themes
             .get(theme as usize)
             .map(|theme| theme.name.as_str())
     }
 
+    pub fn theme(&self, theme: ThemeId) -> Option<&Theme> {
+        self.engine.theme(theme)
+    }
+
+    pub fn token_style(
+        &mut self,
+        language: &str,
+        scopes: crate::tokenizer::ScopeStackId,
+        theme_id: ThemeId,
+    ) -> Result<ResolvedStyle<'_>> {
+        let language = self.language_index(language)?;
+        if theme_id as usize >= self.engine.inner.themes.len() {
+            return Err(Error::InvalidThemeId(theme_id));
+        }
+        self.ensure_tokenizer(language);
+        let theme = self
+            .engine
+            .inner
+            .themes
+            .get(theme_id as usize)
+            .ok_or(Error::InvalidThemeId(theme_id))?;
+        let tokenizer = self.tokenizers[language]
+            .as_mut()
+            .expect("initialized tokenizer");
+        if !tokenizer.contains_scope_stack(scopes) {
+            return Err(Error::InvalidScopeStack(scopes));
+        }
+        let style = tokenizer.styles(scopes)[theme_id as usize];
+        Ok(ResolvedStyle {
+            color: theme.theme.color(
+                style
+                    .foreground
+                    .unwrap_or_else(|| theme.theme.foreground_id()),
+            ),
+            background: style.background.map(|color| theme.theme.color(color)),
+            font_style: style.font_style.unwrap_or_default(),
+        })
+    }
+
     pub fn clear_language_cache(&mut self, language: &str) -> Result<()> {
         let index = self.language_index(language)?;
-        let compiled = &self.engine.inner.compiled[index];
-        let themes = self
-            .themes
-            .iter()
-            .map(|theme| theme.theme.clone())
-            .collect();
-        self.tokenizers[index] = Tokenizer::new(
-            compiled.grammar.clone(),
-            compiled.grammar_id,
-            themes,
-            self.engine.inner.regex_limits,
-        );
+        self.tokenizers[index] = None;
         Ok(())
     }
 
     pub fn clear_all_caches(&mut self) {
         *self = self.engine.highlighter();
+    }
+
+    pub fn is_language_initialized(&self, language: &str) -> Result<bool> {
+        Ok(self.tokenizers[self.language_index(language)?].is_some())
+    }
+
+    pub fn initialized_language_count(&self) -> usize {
+        self.tokenizers
+            .iter()
+            .filter(|tokenizer| tokenizer.is_some())
+            .count()
+    }
+
+    pub fn cache_stats(&self, language: &str) -> Result<Option<TokenizerCacheStats>> {
+        let index = self.language_index(language)?;
+        Ok(self.tokenizers[index].as_ref().map(Tokenizer::cache_stats))
     }
 
     pub fn initial_state(&mut self, language: &str) -> Result<GrammarState> {
@@ -247,7 +339,10 @@ impl Highlighter {
         stack: crate::tokenizer::ScopeStackId,
     ) -> Result<Vec<String>> {
         let index = self.language_index(language)?;
-        self.tokenizers[index].scope_names(stack)
+        self.tokenizers[index]
+            .as_ref()
+            .ok_or(Error::InvalidScopeStack(stack))?
+            .scope_names(stack)
     }
 
     pub fn tokenize_line(
@@ -267,7 +362,10 @@ impl Highlighter {
         language: &str,
     ) -> Result<Vec<Vec<ScopeToken>>> {
         let language = self.language_index(language)?;
-        let tokenizer = &mut self.tokenizers[language];
+        self.ensure_tokenizer(language);
+        let tokenizer = self.tokenizers[language]
+            .as_mut()
+            .expect("initialized tokenizer");
         let mut state = None;
         let mut output = Vec::new();
         for (index, line) in split_lines(code).enumerate() {
@@ -281,8 +379,10 @@ impl Highlighter {
     pub fn code_to_tokens(&mut self, code: &str, language: &str) -> Result<Vec<Vec<ThemedToken>>> {
         let tokens = self.code_to_scope_tokens(code, language)?;
         let language = self.language_index(language)?;
-        let theme = &self.themes[0].theme;
-        let tokenizer = &mut self.tokenizers[language];
+        let theme = &self.engine.inner.themes[0].theme;
+        let tokenizer = self.tokenizers[language]
+            .as_mut()
+            .expect("initialized tokenizer");
         let mut output = Vec::with_capacity(tokens.len());
         for (tokens, line) in tokens.into_iter().zip(split_lines(code)) {
             let mut output_line = Vec::with_capacity(tokens.len());
@@ -291,9 +391,8 @@ impl Highlighter {
                 output_line.push(ThemedToken {
                     content: line[token.range].to_owned(),
                     color: theme
-                        .color(style.foreground.unwrap_or_else(|| theme.foreground_id()))
-                        .to_owned(),
-                    background: style.background.map(|color| theme.color(color).to_owned()),
+                        .color_arc(style.foreground.unwrap_or_else(|| theme.foreground_id())),
+                    background: style.background.map(|color| theme.color_arc(color)),
                     font_style: style.font_style.unwrap_or_default(),
                     scopes: token.scopes,
                 });
@@ -310,8 +409,10 @@ impl Highlighter {
     ) -> Result<Vec<Vec<MultiThemedToken>>> {
         let tokens = self.code_to_scope_tokens(code, language)?;
         let language = self.language_index(language)?;
-        let themes = &self.themes;
-        let tokenizer = &mut self.tokenizers[language];
+        let themes = &self.engine.inner.themes;
+        let tokenizer = self.tokenizers[language]
+            .as_mut()
+            .expect("initialized tokenizer");
         let mut output = Vec::with_capacity(tokens.len());
         for (tokens, line) in tokens.into_iter().zip(split_lines(code)) {
             let mut output_line = Vec::with_capacity(tokens.len());
@@ -322,17 +423,12 @@ impl Highlighter {
                     .zip(tokenizer.styles(token.scopes))
                     .map(|((theme_id, theme), style)| ThemeTokenStyle {
                         theme: theme_id.try_into().expect("too many themes"),
-                        color: theme
-                            .theme
-                            .color(
-                                style
-                                    .foreground
-                                    .unwrap_or_else(|| theme.theme.foreground_id()),
-                            )
-                            .to_owned(),
-                        background: style
-                            .background
-                            .map(|color| theme.theme.color(color).to_owned()),
+                        color: theme.theme.color_arc(
+                            style
+                                .foreground
+                                .unwrap_or_else(|| theme.theme.foreground_id()),
+                        ),
+                        background: style.background.map(|color| theme.theme.color_arc(color)),
                         font_style: style.font_style.unwrap_or_default(),
                     })
                     .collect();
@@ -348,7 +444,8 @@ impl Highlighter {
     }
 
     pub fn code_to_html(&mut self, code: &str, language: &str) -> Result<String> {
-        self.code_to_html_with_options(code, language, &HtmlOptions::default())
+        let options = HtmlOptions::default();
+        self.code_to_html_with_options(code, language, &options)
     }
 
     pub fn code_to_html_with_options(
@@ -357,24 +454,47 @@ impl Highlighter {
         language: &str,
         options: &HtmlOptions,
     ) -> Result<String> {
+        let mut renderer = HtmlRenderer::new(options);
+        self.render(code, language, &mut renderer)
+    }
+
+    pub fn render<R: Renderer + ?Sized>(
+        &mut self,
+        code: &str,
+        language: &str,
+        renderer: &mut R,
+    ) -> Result<R::Output> {
+        renderer.render(self, code, language)
+    }
+
+    fn render_html(&mut self, code: &str, language: &str, options: &HtmlOptions) -> Result<String> {
         let language = self.language_index(language)?;
+        self.ensure_tokenizer(language);
         let default_index = options
             .default_theme
             .as_deref()
-            .and_then(|name| self.themes.iter().position(|theme| theme.name == name))
+            .and_then(|name| {
+                self.engine
+                    .inner
+                    .themes
+                    .iter()
+                    .position(|theme| theme.name == name)
+            })
             .unwrap_or(0);
-        let default = &self.themes[default_index];
-        let multiple = self.themes.len() > 1;
+        let default = &self.engine.inner.themes[default_index];
+        let multiple = self.engine.inner.themes.len() > 1;
 
         let mut pre_classes = options.pre_classes.clone();
         if options.include_theme_class && !multiple {
-            pre_classes.push(default.theme.name.clone());
+            pre_classes.push(default.theme.name.to_string());
         }
         let mut pre_attributes = options.pre_attributes.clone();
         if multiple {
             pre_attributes.insert(
                 "data-themes".to_owned(),
-                self.themes
+                self.engine
+                    .inner
+                    .themes
                     .iter()
                     .map(|theme| theme.name.as_str())
                     .collect::<Vec<_>>()
@@ -384,7 +504,7 @@ impl Highlighter {
 
         let mut root_style = String::new();
         if multiple {
-            for theme in &self.themes {
+            for theme in &self.engine.inner.themes {
                 write!(
                     root_style,
                     "--{}:{};--{}-bg:{};",
@@ -428,8 +548,10 @@ impl Highlighter {
             &options.code_attributes,
             None,
         );
-        let themes = &self.themes;
-        let tokenizer = &mut self.tokenizers[language];
+        let themes = &self.engine.inner.themes;
+        let tokenizer = self.tokenizers[language]
+            .as_mut()
+            .expect("initialized tokenizer");
         let mut state = None;
         for (line_index, source) in split_lines(code).enumerate() {
             let (line, next) =
@@ -470,7 +592,9 @@ impl Highlighter {
     }
 
     fn language_index(&self, language: &str) -> Result<usize> {
-        self.languages
+        self.engine
+            .inner
+            .languages
             .get(language)
             .copied()
             .ok_or_else(|| Error::GrammarNotLoaded(language.to_owned()))
@@ -478,36 +602,70 @@ impl Highlighter {
 
     fn tokenizer(&mut self, language: &str) -> Result<&mut Tokenizer> {
         let index = self.language_index(language)?;
-        Ok(&mut self.tokenizers[index])
+        self.ensure_tokenizer(index);
+        Ok(self.tokenizers[index]
+            .as_mut()
+            .expect("initialized tokenizer"))
     }
-}
 
-impl HighlighterEngine {
-    pub fn highlighter(&self) -> Highlighter {
-        let theme_refs = self
+    fn ensure_tokenizer(&mut self, index: usize) {
+        if self.tokenizers[index].is_some() {
+            return;
+        }
+        let compiled = &self.engine.inner.compiled[index];
+        let themes = self
+            .engine
             .inner
             .themes
             .iter()
             .map(|theme| theme.theme.clone())
-            .collect::<Vec<_>>();
-        let tokenizers = self
-            .inner
-            .compiled
-            .iter()
-            .map(|language| {
-                Tokenizer::new(
-                    language.grammar.clone(),
-                    language.grammar_id,
-                    theme_refs.clone(),
-                    self.inner.regex_limits,
-                )
-            })
             .collect();
+        self.tokenizers[index] = Some(Tokenizer::new(
+            compiled.grammar.clone(),
+            compiled.grammar_id,
+            themes,
+            self.engine.inner.regex_limits,
+        ));
+    }
+}
+
+impl Renderer for HtmlRenderer<'_> {
+    type Output = String;
+
+    fn render(
+        &mut self,
+        highlighter: &mut Highlighter,
+        code: &str,
+        language: &str,
+    ) -> Result<Self::Output> {
+        highlighter.render_html(code, language, self.options)
+    }
+}
+
+impl HighlighterEngine {
+    pub fn language_keys(&self) -> impl Iterator<Item = &str> {
+        self.inner.languages.keys().map(String::as_str)
+    }
+
+    pub fn language_count(&self) -> usize {
+        self.inner.compiled.len()
+    }
+
+    pub fn theme_names(&self) -> impl Iterator<Item = &str> {
+        self.inner.themes.iter().map(|theme| theme.name.as_str())
+    }
+
+    pub fn theme(&self, theme: ThemeId) -> Option<&Theme> {
+        self.inner
+            .themes
+            .get(theme as usize)
+            .map(|theme| theme.theme.as_ref())
+    }
+
+    pub fn highlighter(&self) -> Highlighter {
         Highlighter {
             engine: self.clone(),
-            languages: self.inner.languages.clone(),
-            tokenizers,
-            themes: self.inner.themes.clone(),
+            tokenizers: (0..self.inner.compiled.len()).map(|_| None).collect(),
         }
     }
 
@@ -611,6 +769,10 @@ impl HighlighterEngine {
 impl LanguageSession {
     pub fn initial_state(&self) -> GrammarState {
         self.tokenizer.initial_state()
+    }
+
+    pub fn cache_stats(&self) -> TokenizerCacheStats {
+        self.tokenizer.cache_stats()
     }
 
     pub fn scope_names(&self, stack: crate::tokenizer::ScopeStackId) -> Result<Vec<String>> {
@@ -933,15 +1095,26 @@ fn open_tag(
 ) {
     write!(output, "<{tag}").expect("write to String");
     if !classes.is_empty() {
-        write!(output, " class=\"{}\"", escape_attr(&classes.join(" "))).expect("write to String");
+        output.push_str(" class=\"");
+        for (index, class) in classes.iter().enumerate() {
+            if index > 0 {
+                output.push(' ');
+            }
+            push_escaped_attr(output, class);
+        }
+        output.push('"');
     }
     for (name, value) in attributes {
         if valid_attribute_name(name) {
-            write!(output, " {name}=\"{}\"", escape_attr(value)).expect("write to String");
+            write!(output, " {name}=\"").expect("write to String");
+            push_escaped_attr(output, value);
+            output.push('"');
         }
     }
     if let Some(style) = style.filter(|style| !style.is_empty()) {
-        write!(output, " style=\"{}\"", escape_attr(style)).expect("write to String");
+        output.push_str(" style=\"");
+        push_escaped_attr(output, style);
+        output.push('"');
     }
     output.push('>');
 }
@@ -978,13 +1151,6 @@ fn split_lines(code: &str) -> impl Iterator<Item = &str> {
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
 }
 
-fn escape_html(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
 fn push_escaped_html(output: &mut String, value: &str) {
     let mut last = 0;
     for (index, ch) in value.char_indices() {
@@ -1016,8 +1182,4 @@ fn push_escaped_attr(output: &mut String, value: &str) {
         last = index + ch.len_utf8();
     }
     output.push_str(&value[last..]);
-}
-
-fn escape_attr(value: &str) -> String {
-    escape_html(value).replace('"', "&quot;")
 }

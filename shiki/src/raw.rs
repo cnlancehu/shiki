@@ -1,12 +1,13 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Deref;
+use std::sync::Arc;
 
 use serde::Deserialize;
 
 #[derive(Debug, Clone)]
 pub enum RawString<'a> {
     Borrowed(&'a str),
-    Owned(String),
+    Owned(Arc<str>),
 }
 
 impl<'a> RawString<'a> {
@@ -34,7 +35,7 @@ impl AsRef<str> for RawString<'_> {
 
 impl From<String> for RawString<'static> {
     fn from(value: String) -> Self {
-        Self::Owned(value)
+        Self::Owned(Arc::from(value))
     }
 }
 
@@ -49,7 +50,7 @@ impl<'de, 'a> Deserialize<'de> for RawString<'a> {
     where
         D: serde::Deserializer<'de>,
     {
-        String::deserialize(deserializer).map(Self::Owned)
+        String::deserialize(deserializer).map(|value| Self::Owned(Arc::from(value)))
     }
 }
 

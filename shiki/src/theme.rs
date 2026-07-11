@@ -6,7 +6,7 @@ use crate::error::{Error, Result};
 use crate::raw::{RawList, RawMap, RawString};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FontStyle(u8);
+pub struct FontStyle(pub u8);
 
 impl FontStyle {
     pub const ITALIC: Self = Self(1);
@@ -16,6 +16,14 @@ impl FontStyle {
 
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 != 0
+    }
+
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    pub const fn from_bits(bits: u8) -> Self {
+        Self(bits & 0b1111)
     }
 }
 
@@ -48,12 +56,12 @@ type SelectorId = u32;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Theme {
-    pub name: String,
-    pub foreground: String,
-    pub background: String,
-    colors: Vec<String>,
+    pub name: Arc<str>,
+    pub foreground: Arc<str>,
+    pub background: Arc<str>,
+    colors: Vec<Arc<str>>,
     foreground_id: ColorId,
-    selectors: Vec<String>,
+    selectors: Vec<Arc<str>>,
     rules: Vec<ThemeRule>,
 }
 
@@ -78,8 +86,8 @@ impl Theme {
                     .get("editor.foreground")
                     .map(|value| value.as_ref())
             })
-            .map(str::to_owned)
-            .unwrap_or_else(|| "#000000".to_owned());
+            .map(Arc::from)
+            .unwrap_or_else(|| Arc::from("#000000"));
         let mut background = raw
             .bg
             .as_deref()
@@ -88,8 +96,8 @@ impl Theme {
                     .get("editor.background")
                     .map(|value| value.as_ref())
             })
-            .map(str::to_owned)
-            .unwrap_or_else(|| "#ffffff".to_owned());
+            .map(Arc::from)
+            .unwrap_or_else(|| Arc::from("#ffffff"));
         let mut colors = Vec::new();
         let mut color_ids = HashMap::new();
         let mut selectors = Vec::new();
@@ -144,11 +152,11 @@ impl Theme {
             }
         }
         let foreground_id = intern_color(&mut colors, &mut color_ids, &foreground);
-        intern_color(&mut colors, &mut color_ids, &background);
+        let background_id = intern_color(&mut colors, &mut color_ids, &background);
         Self {
-            name: raw.name.as_deref().unwrap_or(name).to_owned(),
-            foreground,
-            background,
+            name: Arc::from(raw.name.as_deref().unwrap_or(name)),
+            foreground: colors[foreground_id.index()].clone(),
+            background: colors[background_id.index()].clone(),
             colors,
             foreground_id,
             selectors,
@@ -158,6 +166,18 @@ impl Theme {
 
     pub(crate) fn color(&self, color: ColorId) -> &str {
         &self.colors[color.index()]
+    }
+
+    pub fn palette(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.colors.iter().map(AsRef::as_ref)
+    }
+
+    pub fn selectors(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.selectors.iter().map(AsRef::as_ref)
+    }
+
+    pub(crate) fn color_arc(&self, color: ColorId) -> Arc<str> {
+        self.colors[color.index()].clone()
     }
 
     pub(crate) const fn foreground_id(&self) -> ColorId {
@@ -238,30 +258,32 @@ fn apply_style(result: &mut Style, style: Style) {
 }
 
 fn intern_color(
-    colors: &mut Vec<String>,
-    color_ids: &mut HashMap<String, ColorId>,
+    colors: &mut Vec<Arc<str>>,
+    color_ids: &mut HashMap<Arc<str>, ColorId>,
     color: &str,
 ) -> ColorId {
     if let Some(id) = color_ids.get(color) {
         return *id;
     }
     let id = ColorId(colors.len() as u32);
-    colors.push(color.to_owned());
-    color_ids.insert(color.to_owned(), id);
+    let color: Arc<str> = Arc::from(color);
+    colors.push(color.clone());
+    color_ids.insert(color, id);
     id
 }
 
 fn intern_selector(
-    selectors: &mut Vec<String>,
-    selector_ids: &mut HashMap<String, SelectorId>,
+    selectors: &mut Vec<Arc<str>>,
+    selector_ids: &mut HashMap<Arc<str>, SelectorId>,
     selector: &str,
 ) -> SelectorId {
     if let Some(id) = selector_ids.get(selector) {
         return *id;
     }
     let id = selectors.len() as SelectorId;
-    selectors.push(selector.to_owned());
-    selector_ids.insert(selector.to_owned(), id);
+    let selector: Arc<str> = Arc::from(selector);
+    selectors.push(selector.clone());
+    selector_ids.insert(selector, id);
     id
 }
 
@@ -327,7 +349,7 @@ pub enum RawThemeScope<'a> {
 }
 
 impl RawThemeScope<'_> {
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         match self {
             Self::String(_) => false,
             Self::Array(values) => values.is_empty(),
@@ -335,7 +357,7 @@ impl RawThemeScope<'_> {
         }
     }
 
-    fn iter(&self) -> impl Iterator<Item = &str> {
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
         let string = match self {
             Self::String(value) => Some(value.as_ref()),
             _ => None,
@@ -387,7 +409,7 @@ where
             .filter_map(|(key, value)| {
                 value
                     .as_str()
-                    .map(|value| (key, RawString::Owned(value.to_owned())))
+                    .map(|value| (key, RawString::from(value.to_owned())))
             })
             .collect::<std::collections::BTreeMap<_, _>>(),
     ))
