@@ -63,16 +63,10 @@ function macroIdent(value: string): string | undefined {
 }
 
 function staticString(value: unknown): string {
-  return typeof value === "string"
-    ? `Some(RawString::borrowed(${rustString(value)}))`
-    : "None";
+  return typeof value === "string" ? `Some(RawString::borrowed(${rustString(value)}))` : "None";
 }
 
-function staticList(
-  values: unknown,
-  render: (value: unknown) => string,
-  typeName: string,
-): string {
+function staticList(values: unknown, render: (value: unknown) => string, typeName: string): string {
   const items = Array.isArray(values) ? values : [];
   const name = `RAW_LIST_${staticIndex++}`;
   staticDeclarations.push(
@@ -159,8 +153,7 @@ function rule(value: unknown): string {
     ["while", "while_pattern"],
   ];
   for (const [jsonName, rustName] of strings) {
-    if (typeof raw[jsonName] === "string")
-      fields.set(rustName, staticString(raw[jsonName]));
+    if (typeof raw[jsonName] === "string") fields.set(rustName, staticString(raw[jsonName]));
   }
   const maps: [string, string, (value: unknown) => string][] = [
     ["captures", "captures", captures],
