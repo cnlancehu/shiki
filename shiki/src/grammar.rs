@@ -1,60 +1,61 @@
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::matcher::{ScopeSelector, SelectorSymbols, parse_scope_selector};
+use crate::raw::{RawList, RawMap, RawString};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RawGrammar {
+pub struct RawGrammar<'a> {
     #[serde(default)]
-    pub name: Option<String>,
-    pub scope_name: String,
+    pub name: Option<RawString<'a>>,
+    pub scope_name: RawString<'a>,
     #[serde(default)]
-    pub patterns: Vec<RawRule>,
+    pub patterns: RawList<'a, RawRule<'a>>,
     #[serde(default, deserialize_with = "deserialize_repository")]
-    pub repository: HashMap<String, RawRule>,
+    pub repository: RawMap<'a, RawRule<'a>>,
     #[serde(default)]
-    pub injections: HashMap<String, RawRule>,
+    pub injections: RawMap<'a, RawRule<'a>>,
     #[serde(default)]
-    pub injection_selector: Option<String>,
+    pub injection_selector: Option<RawString<'a>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RawRule {
+pub struct RawRule<'a> {
     #[serde(default)]
-    pub include: Option<String>,
+    pub include: Option<RawString<'a>>,
     #[serde(default)]
-    pub name: Option<String>,
+    pub name: Option<RawString<'a>>,
     #[serde(default)]
-    pub content_name: Option<String>,
+    pub content_name: Option<RawString<'a>>,
     #[serde(default, rename = "match")]
-    pub match_pattern: Option<String>,
+    pub match_pattern: Option<RawString<'a>>,
     #[serde(default, deserialize_with = "deserialize_captures")]
-    pub captures: HashMap<String, RawRule>,
+    pub captures: RawMap<'a, RawRule<'a>>,
     #[serde(default)]
-    pub begin: Option<String>,
+    pub begin: Option<RawString<'a>>,
     #[serde(default, deserialize_with = "deserialize_captures")]
-    pub begin_captures: HashMap<String, RawRule>,
+    pub begin_captures: RawMap<'a, RawRule<'a>>,
     #[serde(default)]
-    pub end: Option<String>,
+    pub end: Option<RawString<'a>>,
     #[serde(default, deserialize_with = "deserialize_captures")]
-    pub end_captures: HashMap<String, RawRule>,
+    pub end_captures: RawMap<'a, RawRule<'a>>,
     #[serde(default, rename = "while")]
-    pub while_pattern: Option<String>,
+    pub while_pattern: Option<RawString<'a>>,
     #[serde(default, deserialize_with = "deserialize_captures")]
-    pub while_captures: HashMap<String, RawRule>,
+    pub while_captures: RawMap<'a, RawRule<'a>>,
     #[serde(default)]
-    pub patterns: Vec<RawRule>,
+    pub patterns: RawList<'a, RawRule<'a>>,
     #[serde(default, deserialize_with = "deserialize_repository")]
-    pub repository: HashMap<String, RawRule>,
+    pub repository: RawMap<'a, RawRule<'a>>,
     #[serde(default, deserialize_with = "deserialize_boolish")]
     pub apply_end_pattern_last: bool,
 }
 
-impl RawGrammar {
+impl RawGrammar<'static> {
     pub fn from_json(name: &str, source: &str) -> Result<Self> {
         serde_json::from_str(source).map_err(|source| Error::InvalidGrammar {
             name: name.to_owned(),
@@ -63,101 +64,23 @@ impl RawGrammar {
     }
 }
 
-pub struct StaticRawMapEntry<T: 'static> {
-    pub key: &'static str,
-    pub value: T,
-}
-
-impl<T> StaticRawMapEntry<T> {
-    pub const fn new(key: &'static str, value: T) -> Self {
-        Self { key, value }
-    }
-}
-
-pub struct StaticRawGrammar {
-    pub name: Option<&'static str>,
-    pub scope_name: &'static str,
-    pub patterns: &'static [StaticRawRule],
-    pub repository: &'static [StaticRawMapEntry<StaticRawRule>],
-    pub injections: &'static [StaticRawMapEntry<StaticRawRule>],
-    pub injection_selector: Option<&'static str>,
-}
-
-pub struct StaticRawRule {
-    pub include: Option<&'static str>,
-    pub name: Option<&'static str>,
-    pub content_name: Option<&'static str>,
-    pub match_pattern: Option<&'static str>,
-    pub captures: &'static [StaticRawMapEntry<StaticRawRule>],
-    pub begin: Option<&'static str>,
-    pub begin_captures: &'static [StaticRawMapEntry<StaticRawRule>],
-    pub end: Option<&'static str>,
-    pub end_captures: &'static [StaticRawMapEntry<StaticRawRule>],
-    pub while_pattern: Option<&'static str>,
-    pub while_captures: &'static [StaticRawMapEntry<StaticRawRule>],
-    pub patterns: &'static [StaticRawRule],
-    pub repository: &'static [StaticRawMapEntry<StaticRawRule>],
-    pub apply_end_pattern_last: bool,
-}
-
-impl StaticRawRule {
+impl<'a> RawRule<'a> {
     pub const EMPTY: Self = Self {
         include: None,
         name: None,
         content_name: None,
         match_pattern: None,
-        captures: &[],
+        captures: RawMap::borrowed(&[]),
         begin: None,
-        begin_captures: &[],
+        begin_captures: RawMap::borrowed(&[]),
         end: None,
-        end_captures: &[],
+        end_captures: RawMap::borrowed(&[]),
         while_pattern: None,
-        while_captures: &[],
-        patterns: &[],
-        repository: &[],
+        while_captures: RawMap::borrowed(&[]),
+        patterns: RawList::borrowed(&[]),
+        repository: RawMap::borrowed(&[]),
         apply_end_pattern_last: false,
     };
-
-    fn to_owned(&self) -> RawRule {
-        RawRule {
-            include: self.include.map(str::to_owned),
-            name: self.name.map(str::to_owned),
-            content_name: self.content_name.map(str::to_owned),
-            match_pattern: self.match_pattern.map(str::to_owned),
-            captures: static_map_to_owned(self.captures),
-            begin: self.begin.map(str::to_owned),
-            begin_captures: static_map_to_owned(self.begin_captures),
-            end: self.end.map(str::to_owned),
-            end_captures: static_map_to_owned(self.end_captures),
-            while_pattern: self.while_pattern.map(str::to_owned),
-            while_captures: static_map_to_owned(self.while_captures),
-            patterns: self.patterns.iter().map(Self::to_owned).collect(),
-            repository: static_map_to_owned(self.repository),
-            apply_end_pattern_last: self.apply_end_pattern_last,
-        }
-    }
-}
-
-impl StaticRawGrammar {
-    pub fn to_owned(&self) -> RawGrammar {
-        RawGrammar {
-            name: self.name.map(str::to_owned),
-            scope_name: self.scope_name.to_owned(),
-            patterns: self.patterns.iter().map(StaticRawRule::to_owned).collect(),
-            repository: static_map_to_owned(self.repository),
-            injections: static_map_to_owned(self.injections),
-            injection_selector: self.injection_selector.map(str::to_owned),
-        }
-    }
-}
-
-fn static_map_to_owned(
-    values: &'static [StaticRawMapEntry<StaticRawRule>],
-) -> HashMap<String, RawRule> {
-    values
-        .iter()
-        .map(|entry| (entry.key.to_owned(), entry.value.to_owned()))
-        .collect()
 }
 
 pub(crate) type RuleId = u32;
@@ -165,20 +88,23 @@ pub(crate) type PatternSourceId = u32;
 pub(crate) type ScopeNameId = u32;
 pub(crate) type ScopeTemplateId = u32;
 
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct ScopeName {
     pub scopes: Box<[ScopeTemplateId]>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct ScopeTemplate {
     pub parts: Box<[ScopePart]>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) enum ScopePart {
     Literal(String),
     Capture(usize),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Capture {
     pub index: usize,
     pub name: Option<ScopeNameId>,
@@ -186,7 +112,7 @@ pub(crate) struct Capture {
     pub retokenize: Option<RuleId>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum RuleKind {
     Match {
         pattern: PatternSourceId,
@@ -213,13 +139,14 @@ pub(crate) enum RuleKind {
     Placeholder,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Rule {
     pub name: Option<ScopeNameId>,
     pub content_name: Option<ScopeNameId>,
     pub kind: RuleKind,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct CompiledGrammar {
     pub root_scope_name: ScopeNameId,
     pub root: RuleId,
@@ -231,18 +158,18 @@ pub(crate) struct CompiledGrammar {
     pub injections: Vec<Injection>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Injection {
     pub selector: ScopeSelector,
     pub rule: RuleId,
 }
 
-type RepoChain<'a> = Vec<&'a HashMap<String, RawRule>>;
+type RepoChain<'a> = Vec<&'a RawMap<'static, RawRule<'static>>>;
 
 pub(crate) fn compile(
     scope_name: &str,
-    grammars: &HashMap<String, &RawGrammar>,
-    external_injections: &[String],
+    grammars: &HashMap<String, &RawGrammar<'static>>,
+    external_injections: &HashMap<String, Vec<String>>,
 ) -> Result<CompiledGrammar> {
     let base = grammars
         .get(scope_name)
@@ -263,19 +190,24 @@ pub(crate) fn compile(
     };
     let root_scope_name = compiler.intern_scope_name(&base.scope_name);
     let root = compiler.compile_root(base, base)?;
-    for (selector, raw) in &base.injections {
+    for (selector, raw) in base.injections.iter() {
         let repo = vec![&base.repository];
         let id = compiler.compile_rule(raw, &repo, base, base)?;
         compiler.add_injection(selector, id);
     }
-    for injection_scope in external_injections {
-        if let Some(injection) = grammars.get(injection_scope) {
-            let id = compiler.compile_root(injection, base)?;
-            let selector = injection
-                .injection_selector
-                .clone()
-                .unwrap_or_else(|| format!("L:{scope_name}"));
-            compiler.add_injection(&selector, id);
+    let mut external_injections = external_injections.iter().collect::<Vec<_>>();
+    external_injections.sort_by_key(|(target_scope, _)| target_scope.as_str());
+    for (target_scope, injection_scopes) in external_injections {
+        for injection_scope in injection_scopes {
+            if let Some(injection) = grammars.get(injection_scope) {
+                let id = compiler.compile_root(injection, base)?;
+                let selector = injection
+                    .injection_selector
+                    .as_deref()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("L:{target_scope}"));
+                compiler.add_injection(&selector, id);
+            }
         }
     }
     compiler
@@ -294,7 +226,7 @@ pub(crate) fn compile(
 }
 
 struct Compiler<'a> {
-    grammars: &'a HashMap<String, &'a RawGrammar>,
+    grammars: &'a HashMap<String, &'a RawGrammar<'static>>,
     rules: Vec<Rule>,
     roots: HashMap<(String, String), RuleId>,
     raw_cache: HashMap<(usize, String, String), RuleId>,
@@ -329,8 +261,15 @@ impl<'a> Compiler<'a> {
         id
     }
 
-    fn compile_root(&mut self, grammar: &'a RawGrammar, base: &'a RawGrammar) -> Result<RuleId> {
-        let key = (grammar.scope_name.clone(), base.scope_name.clone());
+    fn compile_root(
+        &mut self,
+        grammar: &'a RawGrammar<'static>,
+        base: &'a RawGrammar<'static>,
+    ) -> Result<RuleId> {
+        let key = (
+            grammar.scope_name.as_ref().to_owned(),
+            base.scope_name.as_ref().to_owned(),
+        );
         if let Some(id) = self.roots.get(&key) {
             return Ok(*id);
         }
@@ -344,10 +283,10 @@ impl<'a> Compiler<'a> {
 
     fn compile_patterns(
         &mut self,
-        patterns: &'a [RawRule],
+        patterns: &'a [RawRule<'static>],
         repo: &RepoChain<'a>,
-        grammar: &'a RawGrammar,
-        base: &'a RawGrammar,
+        grammar: &'a RawGrammar<'static>,
+        base: &'a RawGrammar<'static>,
     ) -> Result<Vec<RuleId>> {
         patterns
             .iter()
@@ -357,10 +296,10 @@ impl<'a> Compiler<'a> {
 
     fn compile_rule(
         &mut self,
-        raw: &'a RawRule,
+        raw: &'a RawRule<'static>,
         repo: &RepoChain<'a>,
-        grammar: &'a RawGrammar,
-        base: &'a RawGrammar,
+        grammar: &'a RawGrammar<'static>,
+        base: &'a RawGrammar<'static>,
     ) -> Result<RuleId> {
         if let Some(include) = &raw.include {
             return self.compile_include(include, repo, grammar, base);
@@ -368,8 +307,8 @@ impl<'a> Compiler<'a> {
 
         let key = (
             raw as *const RawRule as usize,
-            grammar.scope_name.clone(),
-            base.scope_name.clone(),
+            grammar.scope_name.as_ref().to_owned(),
+            base.scope_name.as_ref().to_owned(),
         );
         if let Some(id) = self.raw_cache.get(&key) {
             return Ok(*id);
@@ -442,13 +381,13 @@ impl<'a> Compiler<'a> {
 
     fn compile_captures(
         &mut self,
-        captures: &'a HashMap<String, RawRule>,
+        captures: &'a RawMap<'static, RawRule<'static>>,
         repo: &RepoChain<'a>,
-        grammar: &'a RawGrammar,
-        base: &'a RawGrammar,
+        grammar: &'a RawGrammar<'static>,
+        base: &'a RawGrammar<'static>,
     ) -> Result<Vec<Capture>> {
         let mut output = Vec::new();
-        for (key, capture) in captures {
+        for (key, capture) in captures.iter() {
             let Ok(index) = key.parse::<usize>() else {
                 continue;
             };
@@ -478,8 +417,8 @@ impl<'a> Compiler<'a> {
         &mut self,
         include: &str,
         repo: &RepoChain<'a>,
-        grammar: &'a RawGrammar,
-        base: &'a RawGrammar,
+        grammar: &'a RawGrammar<'static>,
+        base: &'a RawGrammar<'static>,
     ) -> Result<RuleId> {
         match include {
             "$self" => return self.compile_root(grammar, base),
@@ -575,9 +514,9 @@ fn parse_scope_template(scope: &str) -> Vec<ScopePart> {
 }
 
 fn captures_or<'a>(
-    specific: &'a HashMap<String, RawRule>,
-    fallback: &'a HashMap<String, RawRule>,
-) -> &'a HashMap<String, RawRule> {
+    specific: &'a RawMap<'static, RawRule<'static>>,
+    fallback: &'a RawMap<'static, RawRule<'static>>,
+) -> &'a RawMap<'static, RawRule<'static>> {
     if specific.is_empty() {
         fallback
     } else {
@@ -601,7 +540,7 @@ fn normalize_pattern(pattern: &str) -> String {
 
 fn deserialize_captures<'de, D>(
     deserializer: D,
-) -> std::result::Result<HashMap<String, RawRule>, D::Error>
+) -> std::result::Result<RawMap<'static, RawRule<'static>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -625,7 +564,7 @@ where
         }
         let rule = match value {
             serde_json::Value::String(name) => RawRule {
-                name: Some(name),
+                name: Some(name.into()),
                 ..RawRule::default()
             },
             value @ serde_json::Value::Object(_) => {
@@ -635,7 +574,7 @@ where
         };
         captures.insert(key, rule);
     }
-    Ok(captures)
+    Ok(RawMap::Owned(captures.into_iter().collect()))
 }
 
 fn deserialize_boolish<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
@@ -653,28 +592,31 @@ where
 
 fn deserialize_repository<'de, D>(
     deserializer: D,
-) -> std::result::Result<HashMap<String, RawRule>, D::Error>
+) -> std::result::Result<RawMap<'static, RawRule<'static>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     use serde::de::Error as _;
 
     let values = HashMap::<String, serde_json::Value>::deserialize(deserializer)?;
-    values
+    let values = values
         .into_iter()
         .map(|(name, value)| {
             let rule = match value {
                 serde_json::Value::Array(values) => RawRule {
-                    patterns: values
-                        .into_iter()
-                        .map(serde_json::from_value)
-                        .collect::<std::result::Result<Vec<RawRule>, _>>()
-                        .map_err(D::Error::custom)?,
+                    patterns: RawList::Owned(
+                        values
+                            .into_iter()
+                            .map(serde_json::from_value)
+                            .collect::<std::result::Result<Vec<RawRule<'static>>, _>>()
+                            .map_err(D::Error::custom)?,
+                    ),
                     ..RawRule::default()
                 },
                 value => serde_json::from_value(value).map_err(D::Error::custom)?,
             };
             Ok((name, rule))
         })
-        .collect()
+        .collect::<std::result::Result<std::collections::BTreeMap<_, _>, _>>()?;
+    Ok(RawMap::Owned(values))
 }

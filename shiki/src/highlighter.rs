@@ -1,22 +1,69 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use serde::{Deserialize, Serialize};
 
 use crate::definition::{LanguageBundle, ThemeDefinition};
 use crate::error::{Error, Result};
 use crate::grammar::{RawGrammar, compile};
 use crate::theme::{FontStyle, RawTheme, Style, Theme};
 use crate::tokenizer::{
-    GrammarState, MultiThemedToken, ScopeToken, ThemeTokenStyle, ThemedToken, Tokenizer,
+    GrammarState, MultiThemedToken, RegexLimits, ScopeToken, ThemeTokenStyle, ThemedToken,
+    Tokenizer,
 };
 
+#[derive(Clone)]
 struct NamedTheme {
     name: String,
     css_name: String,
     theme: Arc<Theme>,
 }
 
+struct CompiledLanguage {
+    grammar: Arc<crate::grammar::CompiledGrammar>,
+    grammar_id: u64,
+}
+
+struct EngineInner {
+    languages: HashMap<String, usize>,
+    compiled: Vec<CompiledLanguage>,
+    themes: Vec<NamedTheme>,
+    regex_limits: RegexLimits,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PrecompiledTheme {
+    name: String,
+    css_name: String,
+    theme: Theme,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PrecompiledEngine {
+    version: u32,
+    languages: Vec<(String, usize)>,
+    compiled: Vec<crate::grammar::CompiledGrammar>,
+    themes: Vec<PrecompiledTheme>,
+    regex_limits: RegexLimits,
+}
+
+const PRECOMPILED_VERSION: u32 = 1;
+
+#[derive(Clone)]
+pub struct HighlighterEngine {
+    inner: Arc<EngineInner>,
+}
+
+pub struct LanguageSession {
+    tokenizer: Tokenizer,
+}
+
+static NEXT_GRAMMAR_ID: AtomicU64 = AtomicU64::new(1);
+
 pub struct Highlighter {
+    engine: HighlighterEngine,
     languages: HashMap<String, usize>,
     tokenizers: Vec<Tokenizer>,
     themes: Vec<NamedTheme>,
@@ -25,20 +72,20 @@ pub struct Highlighter {
 pub struct HighlighterBuilder {
     bundle: Option<LanguageBundle>,
     languages: Vec<String>,
-    runtime_languages: Vec<RawLanguage>,
+    runtime_languages: Vec<LanguageInput>,
     themes: Vec<(String, ThemeInput)>,
-    max_line_length: Option<usize>,
+    regex_limits: RegexLimits,
 }
 
-pub struct RawLanguage {
+pub struct LanguageInput {
     pub id: String,
     pub aliases: Vec<String>,
     pub inject_to: Vec<String>,
-    pub grammar: RawGrammar,
+    pub grammar: RawGrammar<'static>,
 }
 
-impl RawLanguage {
-    pub fn new(id: impl Into<String>, grammar: RawGrammar) -> Self {
+impl LanguageInput {
+    pub fn new(id: impl Into<String>, grammar: RawGrammar<'static>) -> Self {
         Self {
             id: id.into(),
             aliases: Vec::new(),
@@ -58,9 +105,21 @@ impl RawLanguage {
     }
 }
 
-enum ThemeInput {
+pub enum ThemeInput {
     Definition(&'static ThemeDefinition),
-    Raw(RawTheme),
+    Raw(RawTheme<'static>),
+}
+
+impl From<&'static ThemeDefinition> for ThemeInput {
+    fn from(value: &'static ThemeDefinition) -> Self {
+        Self::Definition(value)
+    }
+}
+
+impl From<RawTheme<'static>> for ThemeInput {
+    fn from(value: RawTheme<'static>) -> Self {
+        Self::Raw(value)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -143,7 +202,7 @@ impl Highlighter {
             languages: Vec::new(),
             runtime_languages: Vec::new(),
             themes: Vec::new(),
-            max_line_length: None,
+            regex_limits: RegexLimits::default(),
         }
     }
 
@@ -157,8 +216,38 @@ impl Highlighter {
             .map(|theme| theme.name.as_str())
     }
 
+    pub fn clear_language_cache(&mut self, language: &str) -> Result<()> {
+        let index = self.language_index(language)?;
+        let compiled = &self.engine.inner.compiled[index];
+        let themes = self
+            .themes
+            .iter()
+            .map(|theme| theme.theme.clone())
+            .collect();
+        self.tokenizers[index] = Tokenizer::new(
+            compiled.grammar.clone(),
+            compiled.grammar_id,
+            themes,
+            self.engine.inner.regex_limits,
+        );
+        Ok(())
+    }
+
+    pub fn clear_all_caches(&mut self) {
+        *self = self.engine.highlighter();
+    }
+
     pub fn initial_state(&mut self, language: &str) -> Result<GrammarState> {
         Ok(self.tokenizer(language)?.initial_state())
+    }
+
+    pub fn scope_names(
+        &self,
+        language: &str,
+        stack: crate::tokenizer::ScopeStackId,
+    ) -> Result<Vec<String>> {
+        let index = self.language_index(language)?;
+        self.tokenizers[index].scope_names(stack)
     }
 
     pub fn tokenize_line(
@@ -393,6 +482,156 @@ impl Highlighter {
     }
 }
 
+impl HighlighterEngine {
+    pub fn highlighter(&self) -> Highlighter {
+        let theme_refs = self
+            .inner
+            .themes
+            .iter()
+            .map(|theme| theme.theme.clone())
+            .collect::<Vec<_>>();
+        let tokenizers = self
+            .inner
+            .compiled
+            .iter()
+            .map(|language| {
+                Tokenizer::new(
+                    language.grammar.clone(),
+                    language.grammar_id,
+                    theme_refs.clone(),
+                    self.inner.regex_limits,
+                )
+            })
+            .collect();
+        Highlighter {
+            engine: self.clone(),
+            languages: self.inner.languages.clone(),
+            tokenizers,
+            themes: self.inner.themes.clone(),
+        }
+    }
+
+    pub fn session(&self, language: &str) -> Result<LanguageSession> {
+        let index = self
+            .inner
+            .languages
+            .get(language)
+            .copied()
+            .ok_or_else(|| Error::GrammarNotLoaded(language.to_owned()))?;
+        let compiled = &self.inner.compiled[index];
+        let themes = self
+            .inner
+            .themes
+            .iter()
+            .map(|theme| theme.theme.clone())
+            .collect();
+        Ok(LanguageSession {
+            tokenizer: Tokenizer::new(
+                compiled.grammar.clone(),
+                compiled.grammar_id,
+                themes,
+                self.inner.regex_limits,
+            ),
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn __to_precompiled_bytes(&self) -> Result<Vec<u8>> {
+        let mut languages = self
+            .inner
+            .languages
+            .iter()
+            .map(|(name, index)| (name.clone(), *index))
+            .collect::<Vec<_>>();
+        languages.sort_by(|left, right| left.0.cmp(&right.0));
+        let compiled = self
+            .inner
+            .compiled
+            .iter()
+            .map(|language| language.grammar.as_ref().clone())
+            .collect();
+        let themes = self
+            .inner
+            .themes
+            .iter()
+            .map(|theme| PrecompiledTheme {
+                name: theme.name.clone(),
+                css_name: theme.css_name.clone(),
+                theme: theme.theme.as_ref().clone(),
+            })
+            .collect();
+        serde_json::to_vec(&PrecompiledEngine {
+            version: PRECOMPILED_VERSION,
+            languages,
+            compiled,
+            themes,
+            regex_limits: self.inner.regex_limits,
+        })
+        .map_err(|error| Error::InvalidPrecompiled(error.to_string()))
+    }
+
+    #[doc(hidden)]
+    pub fn __from_precompiled_bytes(bytes: &[u8]) -> Result<Self> {
+        let data: PrecompiledEngine = serde_json::from_slice(bytes)
+            .map_err(|error| Error::InvalidPrecompiled(error.to_string()))?;
+        if data.version != PRECOMPILED_VERSION {
+            return Err(Error::InvalidPrecompiled(format!(
+                "snapshot version {} is not supported (expected {PRECOMPILED_VERSION})",
+                data.version
+            )));
+        }
+        let compiled = data
+            .compiled
+            .into_iter()
+            .map(|grammar| CompiledLanguage {
+                grammar: Arc::new(grammar),
+                grammar_id: NEXT_GRAMMAR_ID.fetch_add(1, Ordering::Relaxed),
+            })
+            .collect();
+        let themes = data
+            .themes
+            .into_iter()
+            .map(|theme| NamedTheme {
+                name: theme.name,
+                css_name: theme.css_name,
+                theme: Arc::new(theme.theme),
+            })
+            .collect();
+        Ok(Self {
+            inner: Arc::new(EngineInner {
+                languages: data.languages.into_iter().collect(),
+                compiled,
+                themes,
+                regex_limits: data.regex_limits,
+            }),
+        })
+    }
+}
+
+impl LanguageSession {
+    pub fn initial_state(&self) -> GrammarState {
+        self.tokenizer.initial_state()
+    }
+
+    pub fn scope_names(&self, stack: crate::tokenizer::ScopeStackId) -> Result<Vec<String>> {
+        self.tokenizer.scope_names(stack)
+    }
+
+    pub fn tokenize_line(
+        &mut self,
+        line: &str,
+        state: &mut GrammarState,
+        is_first_line: bool,
+    ) -> Result<Vec<ScopeToken>> {
+        let previous = std::mem::take(state);
+        let (tokens, next) =
+            self.tokenizer
+                .tokenize_line_owned(line, Some(previous), is_first_line)?;
+        *state = next;
+        Ok(tokens)
+    }
+}
+
 impl HighlighterBuilder {
     pub fn bundle(mut self, bundle: &LanguageBundle) -> Self {
         self.bundle = Some(*bundle);
@@ -408,39 +647,35 @@ impl HighlighterBuilder {
         self
     }
 
-    pub fn max_tokenization_line_length(mut self, length: usize) -> Self {
-        self.max_line_length = Some(length);
+    pub fn theme(mut self, theme: impl Into<ThemeInput>) -> Self {
+        self.themes = vec![("default".to_owned(), theme.into())];
         self
     }
 
-    pub fn unlimited_tokenization_line_length(mut self) -> Self {
-        self.max_line_length = None;
-        self
-    }
-
-    pub fn theme(mut self, theme: &'static ThemeDefinition) -> Self {
-        self.themes = vec![("default".to_owned(), ThemeInput::Definition(theme))];
-        self
-    }
-
-    pub fn themes<I, S>(mut self, themes: I) -> Self
+    pub fn themes<I, S, T>(mut self, themes: I) -> Self
     where
-        I: IntoIterator<Item = (S, &'static ThemeDefinition)>,
+        I: IntoIterator<Item = (S, T)>,
         S: Into<String>,
+        T: Into<ThemeInput>,
     {
         self.themes = themes
             .into_iter()
-            .map(|(name, theme)| (name.into(), ThemeInput::Definition(theme)))
+            .map(|(name, theme)| (name.into(), theme.into()))
             .collect();
         self
     }
 
-    pub fn raw_language(mut self, id: impl Into<String>, grammar: RawGrammar) -> Self {
-        self.runtime_languages.push(RawLanguage::new(id, grammar));
+    pub fn regex_limits(mut self, limits: RegexLimits) -> Self {
+        self.regex_limits = limits;
         self
     }
 
-    pub fn raw_language_definition(mut self, language: RawLanguage) -> Self {
+    pub fn language(mut self, id: impl Into<String>, grammar: RawGrammar<'static>) -> Self {
+        self.runtime_languages.push(LanguageInput::new(id, grammar));
+        self
+    }
+
+    pub fn language_definition(mut self, language: LanguageInput) -> Self {
         self.runtime_languages.push(language);
         self
     }
@@ -448,25 +683,25 @@ impl HighlighterBuilder {
     pub fn json_language(self, id: impl Into<String>, source: &str) -> Result<Self> {
         let id = id.into();
         let grammar = RawGrammar::from_json(&id, source)?;
-        Ok(self.raw_language(id, grammar))
+        Ok(self.language(id, grammar))
     }
 
-    pub fn raw_theme(mut self, name: impl Into<String>, theme: RawTheme) -> Self {
-        self.themes.push((name.into(), ThemeInput::Raw(theme)));
-        self
-    }
-
-    pub fn json_theme(self, name: impl Into<String>, source: &str) -> Result<Self> {
+    pub fn json_theme(mut self, name: impl Into<String>, source: &str) -> Result<Self> {
         let name = name.into();
         let theme = RawTheme::from_json(&name, source)?;
-        Ok(self.raw_theme(name, theme))
+        self.themes.push((name, ThemeInput::Raw(theme)));
+        Ok(self)
     }
 
     pub fn build(self) -> Result<Highlighter> {
-        let definitions = match self.bundle {
+        Ok(self.build_engine()?.highlighter())
+    }
+
+    pub fn build_engine(self) -> Result<HighlighterEngine> {
+        let (definitions, root_definitions) = match self.bundle {
             Some(bundle) => bundle.resolve(&self.languages)?,
             None if self.runtime_languages.is_empty() => return Err(Error::NoLanguage),
-            None => Vec::new(),
+            None => (Vec::new(), Vec::new()),
         };
         if self.themes.is_empty() {
             return Err(Error::NoTheme);
@@ -480,7 +715,7 @@ impl HighlighterBuilder {
                 return Err(Error::DuplicateTheme(name));
             }
             let theme = match definition {
-                ThemeInput::Definition(definition) => definition.theme()?,
+                ThemeInput::Definition(definition) => definition.theme(),
                 ThemeInput::Raw(raw) => Arc::new(Theme::from_raw(&name, &raw)),
             };
             themes.push(NamedTheme {
@@ -493,27 +728,25 @@ impl HighlighterBuilder {
         let static_languages = definitions
             .iter()
             .map(|definition| {
-                definition.grammar().map(|grammar| {
-                    (
-                        definition.id.to_owned(),
-                        definition.scope_name.to_owned(),
-                        definition
-                            .aliases
-                            .iter()
-                            .map(|alias| (*alias).to_owned())
-                            .collect::<Vec<_>>(),
-                        definition
-                            .inject_to
-                            .iter()
-                            .map(|scope| (*scope).to_owned())
-                            .collect::<Vec<_>>(),
-                        grammar,
-                    )
-                })
+                (
+                    definition.id.to_owned(),
+                    definition.scope_name.to_owned(),
+                    definition
+                        .aliases
+                        .iter()
+                        .map(|alias| (*alias).to_owned())
+                        .collect::<Vec<_>>(),
+                    definition
+                        .inject_to
+                        .iter()
+                        .map(|scope| (*scope).to_owned())
+                        .collect::<Vec<_>>(),
+                    definition.grammar(),
+                )
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Vec<_>>();
         let runtime_languages = self.runtime_languages.into_iter().map(|language| {
-            let scope_name = language.grammar.scope_name.clone();
+            let scope_name = language.grammar.scope_name.as_ref().to_owned();
             (
                 language.id,
                 scope_name,
@@ -522,7 +755,7 @@ impl HighlighterBuilder {
                 language.grammar,
             )
         });
-        let mut grammars: HashMap<String, &RawGrammar> = HashMap::new();
+        let mut grammars: HashMap<String, &RawGrammar<'static>> = HashMap::new();
         let mut injections: HashMap<String, Vec<String>> = HashMap::new();
         for (_, scope_name, _, inject_to, grammar) in &static_languages {
             grammars.insert(scope_name.clone(), grammar);
@@ -543,17 +776,16 @@ impl HighlighterBuilder {
                     .push(scope_name.clone());
             }
         }
-        let theme_refs = themes
-            .iter()
-            .map(|theme| theme.theme.clone())
-            .collect::<Vec<_>>();
         let mut languages = HashMap::new();
-        let mut tokenizers = Vec::with_capacity(static_languages.len() + runtime_languages.len());
+        let root_ids = root_definitions
+            .iter()
+            .map(|definition| definition.id)
+            .collect::<HashSet<_>>();
+        let mut compiled = Vec::with_capacity(root_definitions.len() + runtime_languages.len());
         for (id, scope_name, aliases, _, _) in static_languages
             .iter()
-            .map(|(id, scope, aliases, inject, grammar)| {
-                (id, scope, aliases, inject, grammar.as_ref())
-            })
+            .filter(|(id, ..)| root_ids.contains(id.as_str()))
+            .map(|(id, scope, aliases, inject, grammar)| (id, scope, aliases, inject, *grammar))
             .chain(
                 runtime_languages
                     .iter()
@@ -562,27 +794,25 @@ impl HighlighterBuilder {
                     }),
             )
         {
-            let injection_scopes = injections
-                .get(scope_name)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
-            let grammar = compile(scope_name, &grammars, injection_scopes)?;
-            let index = tokenizers.len();
-            tokenizers.push(Tokenizer::new(
+            let grammar = Arc::new(compile(scope_name, &grammars, &injections)?);
+            let index = compiled.len();
+            compiled.push(CompiledLanguage {
                 grammar,
-                theme_refs.clone(),
-                self.max_line_length,
-            ));
+                grammar_id: NEXT_GRAMMAR_ID.fetch_add(1, Ordering::Relaxed),
+            });
             languages.insert(id.clone(), index);
             languages.insert(scope_name.clone(), index);
             for alias in aliases {
                 languages.insert(alias.clone(), index);
             }
         }
-        Ok(Highlighter {
-            languages,
-            tokenizers,
-            themes,
+        Ok(HighlighterEngine {
+            inner: Arc::new(EngineInner {
+                languages,
+                compiled,
+                themes,
+                regex_limits: self.regex_limits,
+            }),
         })
     }
 }

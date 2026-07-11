@@ -4,6 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Bundled TextMate language grammars for shiki"
+include = [
+    "Cargo.toml",
+    "src/**",
+    "assets/**",
+    "examples/**",
+    "tests/**",
+]
 
 [dependencies]
 shiki.workspace = true

@@ -1,11 +1,11 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
-use crate::grammar::StaticRawMapEntry;
+use crate::raw::{RawList, RawMap, RawString};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FontStyle(u8);
 
 impl FontStyle {
@@ -19,7 +19,7 @@ impl FontStyle {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct ColorId(u32);
 
 impl ColorId {
@@ -28,14 +28,14 @@ impl ColorId {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Style {
     pub foreground: Option<ColorId>,
     pub background: Option<ColorId>,
     pub font_style: Option<FontStyle>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ThemeRule {
     target: SelectorId,
     parents: Vec<SelectorId>,
@@ -46,7 +46,7 @@ struct ThemeRule {
 
 type SelectorId = u32;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Theme {
     pub name: String,
     pub foreground: String,
@@ -64,12 +64,7 @@ pub(crate) struct ThemeMatcher {
 }
 
 impl Theme {
-    pub fn from_json(name: &str, source: &str) -> Result<Self> {
-        let raw = RawTheme::from_json(name, source)?;
-        Ok(Self::from_raw(name, &raw))
-    }
-
-    pub fn from_raw(name: &str, raw: &RawTheme) -> Self {
+    pub fn from_raw(name: &str, raw: &RawTheme<'_>) -> Self {
         let settings = if raw.settings.is_empty() {
             &raw.token_colors
         } else {
@@ -159,10 +154,6 @@ impl Theme {
             selectors,
             rules,
         }
-    }
-
-    pub fn from_static(name: &str, raw: &StaticRawTheme) -> Self {
-        Self::from_raw(name, &raw.to_owned())
     }
 
     pub(crate) fn color(&self, color: ColorId) -> &str {
@@ -294,22 +285,22 @@ fn parse_font_style(value: &str) -> FontStyle {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RawTheme {
+pub struct RawTheme<'a> {
     #[serde(default)]
-    pub name: Option<String>,
+    pub name: Option<RawString<'a>>,
     #[serde(default)]
-    pub fg: Option<String>,
+    pub fg: Option<RawString<'a>>,
     #[serde(default)]
-    pub bg: Option<String>,
+    pub bg: Option<RawString<'a>>,
     #[serde(default, deserialize_with = "deserialize_string_map")]
-    pub colors: HashMap<String, String>,
+    pub colors: RawMap<'a, RawString<'a>>,
     #[serde(default)]
-    pub settings: Vec<RawThemeRule>,
+    pub settings: RawList<'a, RawThemeRule<'a>>,
     #[serde(default)]
-    pub token_colors: Vec<RawThemeRule>,
+    pub token_colors: RawList<'a, RawThemeRule<'a>>,
 }
 
-impl RawTheme {
+impl RawTheme<'static> {
     pub fn from_json(name: &str, source: &str) -> Result<Self> {
         serde_json::from_str(source).map_err(|source| Error::InvalidTheme {
             name: name.to_owned(),
@@ -318,24 +309,24 @@ impl RawTheme {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct RawThemeRule {
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RawThemeRule<'a> {
     #[serde(default)]
-    pub scope: RawThemeScope,
+    pub scope: RawThemeScope<'a>,
     #[serde(default)]
-    pub settings: RawThemeSettings,
+    pub settings: RawThemeSettings<'a>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(untagged)]
-pub enum RawThemeScope {
-    String(String),
-    Array(Vec<String>),
+pub enum RawThemeScope<'a> {
+    String(RawString<'a>),
+    Array(RawList<'a, RawString<'a>>),
     #[default]
     Missing,
 }
 
-impl RawThemeScope {
+impl RawThemeScope<'_> {
     fn is_empty(&self) -> bool {
         match self {
             Self::String(_) => false,
@@ -346,65 +337,36 @@ impl RawThemeScope {
 
     fn iter(&self) -> impl Iterator<Item = &str> {
         let string = match self {
-            Self::String(value) => Some(value.as_str()),
+            Self::String(value) => Some(value.as_ref()),
             _ => None,
         };
         let array = match self {
             Self::Array(values) => values.iter(),
             _ => [].iter(),
         };
-        string.into_iter().chain(array.map(String::as_str))
+        string.into_iter().chain(array.map(AsRef::as_ref))
     }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RawThemeSettings {
+pub struct RawThemeSettings<'a> {
     #[serde(default)]
-    pub foreground: Option<String>,
+    pub foreground: Option<RawString<'a>>,
     #[serde(default)]
-    pub background: Option<String>,
+    pub background: Option<RawString<'a>>,
     #[serde(default)]
-    pub font_style: Option<String>,
+    pub font_style: Option<RawString<'a>>,
 }
 
-pub struct StaticRawTheme {
-    pub name: Option<&'static str>,
-    pub fg: Option<&'static str>,
-    pub bg: Option<&'static str>,
-    pub colors: &'static [StaticRawMapEntry<&'static str>],
-    pub settings: &'static [StaticRawThemeRule],
-    pub token_colors: &'static [StaticRawThemeRule],
-}
-
-#[derive(Clone, Copy)]
-pub struct StaticRawThemeRule {
-    pub scope: StaticRawThemeScope,
-    pub settings: StaticRawThemeSettings,
-}
-
-impl StaticRawThemeRule {
+impl<'a> RawThemeRule<'a> {
     pub const EMPTY: Self = Self {
-        scope: StaticRawThemeScope::Missing,
-        settings: StaticRawThemeSettings::EMPTY,
+        scope: RawThemeScope::Missing,
+        settings: RawThemeSettings::EMPTY,
     };
 }
 
-#[derive(Clone, Copy)]
-pub enum StaticRawThemeScope {
-    String(&'static str),
-    Array(&'static [&'static str]),
-    Missing,
-}
-
-#[derive(Clone, Copy)]
-pub struct StaticRawThemeSettings {
-    pub foreground: Option<&'static str>,
-    pub background: Option<&'static str>,
-    pub font_style: Option<&'static str>,
-}
-
-impl StaticRawThemeSettings {
+impl<'a> RawThemeSettings<'a> {
     pub const EMPTY: Self = Self {
         foreground: None,
         background: None,
@@ -412,62 +374,21 @@ impl StaticRawThemeSettings {
     };
 }
 
-impl StaticRawTheme {
-    pub fn to_owned(&self) -> RawTheme {
-        RawTheme {
-            name: self.name.map(str::to_owned),
-            fg: self.fg.map(str::to_owned),
-            bg: self.bg.map(str::to_owned),
-            colors: self
-                .colors
-                .iter()
-                .map(|entry| (entry.key.to_owned(), entry.value.to_owned()))
-                .collect(),
-            settings: self
-                .settings
-                .iter()
-                .copied()
-                .map(StaticRawThemeRule::into_owned)
-                .collect(),
-            token_colors: self
-                .token_colors
-                .iter()
-                .copied()
-                .map(StaticRawThemeRule::into_owned)
-                .collect(),
-        }
-    }
-}
-
-impl StaticRawThemeRule {
-    fn into_owned(self) -> RawThemeRule {
-        let scope = match self.scope {
-            StaticRawThemeScope::String(value) => RawThemeScope::String(value.to_owned()),
-            StaticRawThemeScope::Array(values) => {
-                RawThemeScope::Array(values.iter().map(|value| (*value).to_owned()).collect())
-            }
-            StaticRawThemeScope::Missing => RawThemeScope::Missing,
-        };
-        RawThemeRule {
-            scope,
-            settings: RawThemeSettings {
-                foreground: self.settings.foreground.map(str::to_owned),
-                background: self.settings.background.map(str::to_owned),
-                font_style: self.settings.font_style.map(str::to_owned),
-            },
-        }
-    }
-}
-
 fn deserialize_string_map<'de, D>(
     deserializer: D,
-) -> std::result::Result<HashMap<String, String>, D::Error>
+) -> std::result::Result<RawMap<'static, RawString<'static>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let values = std::collections::HashMap::<String, serde_json::Value>::deserialize(deserializer)?;
-    Ok(values
-        .into_iter()
-        .filter_map(|(key, value)| value.as_str().map(|value| (key, value.to_owned())))
-        .collect())
+    Ok(RawMap::Owned(
+        values
+            .into_iter()
+            .filter_map(|(key, value)| {
+                value
+                    .as_str()
+                    .map(|value| (key, RawString::Owned(value.to_owned())))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>(),
+    ))
 }

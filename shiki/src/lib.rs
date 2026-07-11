@@ -14,6 +14,7 @@ mod error;
 mod grammar;
 mod highlighter;
 mod matcher;
+mod raw;
 mod theme;
 mod tokenizer;
 
@@ -21,12 +22,14 @@ pub use definition::{
     LanguageBundle, LanguageDefinition, LanguageGroup, ThemeBundle, ThemeDefinition,
 };
 pub use error::{Error, Result};
-pub use grammar::{RawGrammar, RawRule, StaticRawGrammar, StaticRawMapEntry, StaticRawRule};
-pub use highlighter::{Highlighter, HighlighterBuilder, HtmlOptions, RawLanguage};
-pub use theme::{
-    FontStyle, RawTheme, RawThemeRule, RawThemeScope, RawThemeSettings, StaticRawTheme,
-    StaticRawThemeRule, StaticRawThemeScope, StaticRawThemeSettings, Theme,
+pub use grammar::{RawGrammar, RawRule};
+pub use highlighter::{
+    Highlighter, HighlighterBuilder, HighlighterEngine, HtmlOptions, LanguageInput,
+    LanguageSession, ThemeInput,
 };
+pub use raw::{RawList, RawMap, RawMapEntry, RawString};
+pub use theme::{FontStyle, RawTheme, RawThemeRule, RawThemeScope, RawThemeSettings, Theme};
 pub use tokenizer::{
-    GrammarState, MultiThemedToken, ScopeStackId, ScopeToken, ThemeId, ThemeTokenStyle, ThemedToken,
+    GrammarState, MultiThemedToken, RegexLimits, ScopeStackId, ScopeToken, ThemeId,
+    ThemeTokenStyle, ThemedToken,
 };

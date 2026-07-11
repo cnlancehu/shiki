@@ -6,12 +6,26 @@ A native Rust implementation of Shiki's TextMate highlighting model. It uses
 Oniguruma directly, supports embedded grammars and injection selectors, and
 keeps runtime scope, grammar, theme, and color data behind compact numeric IDs.
 
+## Building from Source
+
+Bundled language/theme assets and their Rust indexes are generated locally and
+ignored by Git. Generate them before the first Cargo build, and again whenever
+the pinned `tm-grammars` or `tm-themes` version changes:
+
+```console
+bun install --frozen-lockfile
+bun run generate
+```
+
+The `shiki-langs` and `shiki-themes` Cargo manifests explicitly include these
+ignored outputs when crates are packaged for publication.
+
 ## Quick Start
 
 The root example bundles only Rust and renders highlighted HTML:
 
 ```console
-cargo run --release --example basic
+cargo run --release -p shiki-langs --example basic
 ```
 
 Its essential setup is:
@@ -49,11 +63,17 @@ let highlighter = Highlighter::builder()
 ```
 
 To parse or construct definitions separately, use `RawGrammar::from_json` and
-`RawTheme::from_json`, then pass them with `raw_language` and `raw_theme`.
+`RawTheme::from_json`, then pass them directly with `language` and `theme`.
 `RawGrammar`, `RawRule`, `RawTheme`, and their nested theme types are public and
-can also be constructed directly. Use `RawLanguage` with
-`raw_language_definition` when runtime grammars need aliases or external
+can also be constructed directly. Use `LanguageInput` with
+`language_definition` when runtime grammars need aliases or external
 `inject_to` targets.
+
+Bundled definitions use the same raw types. Generated modules initialize one
+static `RawGrammar` or `RawTheme` backed by borrowed strings and slices;
+runtime JSON uses the owned variants of those same containers.
+`LanguageDefinition` only stores bundle metadata and a reference to the static
+grammar. No JSON source or parallel static raw model is retained.
 
 ## Multiple Themes
 
@@ -92,7 +112,46 @@ theme declarations are emitted.
 Reuse a `Highlighter` whenever possible. Compiled scanners, regexes, scope
 transitions, injection results, and style rows are cached on first use.
 
-Long lines are fully tokenized by default. Applications that prefer bounded
-runtime over complete highlighting can opt into a fallback with
-`max_tokenization_line_length`; lines above that limit are returned as one
-token while preserving the grammar state.
+## Shared Engines and Document Sessions
+
+Use a shared engine when multiple documents or threads need independent
+tokenization state. Grammar IR and themes stay shared while dynamic scanners,
+scope transitions, and styles are owned by each session.
+
+```rust
+let engine = Highlighter::builder()
+    .bundle(&LANGUAGES)
+    .languages(["rust"])
+    .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+    .build_engine()?;
+
+let mut session = engine.session("rust")?;
+let mut state = session.initial_state();
+let tokens = session.tokenize_line("let value = 1;", &mut state, true)?;
+# Ok::<(), shiki::Error>(())
+```
+
+Legacy `Highlighter` values can release their accumulated dynamic caches with
+`clear_language_cache` or `clear_all_caches`.
+
+## Compile-time Highlighters
+
+`shiki-macros` compiles bundled TextMate grammars and themes while the proc
+macro runs. The expansion embeds a versioned grammar/theme snapshot and keeps
+one shared engine per macro call site.
+
+```rust
+let mut highlighter = shiki_macros::highlighter! {
+    languages: ["rust", "javascript"],
+    themes: [
+        ("dark", "catppuccin-mocha"),
+        ("light", "catppuccin-latte"),
+    ],
+};
+```
+
+Use `highlighter_engine!` with the same input to obtain a cloneable
+`HighlighterEngine`. Native Oniguruma objects contain process-local pointers,
+so they are initialized and cached on first use; JSON parsing, grammar
+expansion, injection resolution, scope interning, and theme compilation have
+already happened at Rust compile time.

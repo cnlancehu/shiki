@@ -2,13 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 use crate::error::{Error, Result};
-use crate::grammar::{RawGrammar, StaticRawGrammar};
-use crate::theme::{StaticRawTheme, Theme};
-
-enum LanguageSource {
-    Static(&'static StaticRawGrammar),
-    Json(&'static str),
-}
+use crate::grammar::RawGrammar;
+use crate::theme::{RawTheme, Theme};
 
 pub struct LanguageDefinition {
     pub id: &'static str,
@@ -17,8 +12,9 @@ pub struct LanguageDefinition {
     pub aliases: &'static [&'static str],
     pub dependencies: &'static [&'static str],
     pub inject_to: &'static [&'static str],
-    source: LanguageSource,
-    parsed: OnceLock<Arc<RawGrammar>>,
+    grammar: Option<&'static RawGrammar<'static>>,
+    source: Option<&'static str>,
+    parsed: OnceLock<RawGrammar<'static>>,
 }
 
 impl LanguageDefinition {
@@ -29,7 +25,7 @@ impl LanguageDefinition {
         aliases: &'static [&'static str],
         dependencies: &'static [&'static str],
         inject_to: &'static [&'static str],
-        grammar: &'static StaticRawGrammar,
+        grammar: &'static RawGrammar<'static>,
     ) -> Self {
         Self {
             id,
@@ -38,7 +34,8 @@ impl LanguageDefinition {
             aliases,
             dependencies,
             inject_to,
-            source: LanguageSource::Static(grammar),
+            grammar: Some(grammar),
+            source: None,
             parsed: OnceLock::new(),
         }
     }
@@ -59,22 +56,24 @@ impl LanguageDefinition {
             aliases,
             dependencies,
             inject_to,
-            source: LanguageSource::Json(source),
+            grammar: None,
+            source: Some(source),
             parsed: OnceLock::new(),
         }
     }
 
-    pub fn grammar(&'static self) -> Result<Arc<RawGrammar>> {
-        if let Some(grammar) = self.parsed.get() {
-            return Ok(grammar.clone());
+    pub fn grammar(&'static self) -> &'static RawGrammar<'static> {
+        if let Some(grammar) = self.grammar {
+            return grammar;
         }
-        let grammar = match self.source {
-            LanguageSource::Static(grammar) => grammar.to_owned(),
-            LanguageSource::Json(source) => RawGrammar::from_json(self.id, source)?,
-        };
-        let grammar = Arc::new(grammar);
-        let _ = self.parsed.set(grammar.clone());
-        Ok(self.parsed.get().cloned().unwrap_or(grammar))
+        self.parsed.get_or_init(|| {
+            RawGrammar::from_json(
+                self.id,
+                self.source
+                    .expect("language definition has no grammar source"),
+            )
+            .expect("bundled grammar JSON is invalid")
+        })
     }
 }
 
@@ -94,7 +93,13 @@ impl LanguageBundle {
         self.groups.iter().flat_map(|group| group.iter().copied())
     }
 
-    pub(crate) fn resolve(self, selected: &[String]) -> Result<Vec<&'static LanguageDefinition>> {
+    pub(crate) fn resolve(
+        self,
+        selected: &[String],
+    ) -> Result<(
+        Vec<&'static LanguageDefinition>,
+        Vec<&'static LanguageDefinition>,
+    )> {
         let mut by_name = HashMap::new();
         for definition in self.definitions() {
             by_name.insert(definition.id, definition);
@@ -146,36 +151,35 @@ impl LanguageBundle {
 
         let mut seen = HashSet::new();
         let mut output = Vec::new();
-        for root in roots {
+        for root in &roots {
             visit(root, &by_name, &mut seen, &mut output)?;
         }
-        Ok(output)
+        Ok((output, roots))
     }
 }
 
 pub struct ThemeDefinition {
     pub id: &'static str,
     pub display_name: &'static str,
-    source: ThemeSource,
-    parsed: OnceLock<Arc<Theme>>,
-}
-
-enum ThemeSource {
-    Static(&'static StaticRawTheme),
-    Json(&'static str),
+    raw: Option<&'static RawTheme<'static>>,
+    source: Option<&'static str>,
+    parsed_raw: OnceLock<RawTheme<'static>>,
+    parsed_theme: OnceLock<Arc<Theme>>,
 }
 
 impl ThemeDefinition {
     pub const fn new(
         id: &'static str,
         display_name: &'static str,
-        theme: &'static StaticRawTheme,
+        raw: &'static RawTheme<'static>,
     ) -> Self {
         Self {
             id,
             display_name,
-            source: ThemeSource::Static(theme),
-            parsed: OnceLock::new(),
+            raw: Some(raw),
+            source: None,
+            parsed_raw: OnceLock::new(),
+            parsed_theme: OnceLock::new(),
         }
     }
 
@@ -187,22 +191,30 @@ impl ThemeDefinition {
         Self {
             id,
             display_name,
-            source: ThemeSource::Json(source),
-            parsed: OnceLock::new(),
+            raw: None,
+            source: Some(source),
+            parsed_raw: OnceLock::new(),
+            parsed_theme: OnceLock::new(),
         }
     }
 
-    pub fn theme(&'static self) -> Result<Arc<Theme>> {
-        if let Some(theme) = self.parsed.get() {
-            return Ok(theme.clone());
+    pub fn raw(&'static self) -> &'static RawTheme<'static> {
+        if let Some(raw) = self.raw {
+            return raw;
         }
-        let theme = match self.source {
-            ThemeSource::Static(raw) => Theme::from_static(self.id, raw),
-            ThemeSource::Json(source) => Theme::from_json(self.id, source)?,
-        };
-        let theme = Arc::new(theme);
-        let _ = self.parsed.set(theme.clone());
-        Ok(self.parsed.get().cloned().unwrap_or(theme))
+        self.parsed_raw.get_or_init(|| {
+            RawTheme::from_json(
+                self.id,
+                self.source.expect("theme definition has no source"),
+            )
+            .expect("bundled theme JSON is invalid")
+        })
+    }
+
+    pub fn theme(&'static self) -> Arc<Theme> {
+        self.parsed_theme
+            .get_or_init(|| Arc::new(Theme::from_raw(self.id, self.raw())))
+            .clone()
     }
 }
 

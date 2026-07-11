@@ -1,0 +1,19 @@
+[package]
+name = "shiki-macros"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+repository.workspace = true
+description = "Compile-time highlighter generation for shiki"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
+
+shiki.workspace = true
+shiki-langs.workspace = true
+shiki-themes.workspace = true

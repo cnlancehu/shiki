@@ -4,10 +4,14 @@ import { grammars, injections, type GrammarInfo } from "tm-grammars";
 import { themes } from "tm-themes";
 
 const root = join(import.meta.dir, "..");
-const langsOut = join(root, "shiki-langs", "generated");
-const themesOut = join(root, "shiki-themes", "generated");
+const legacyLangsOut = join(root, "shiki-langs", "generated");
+const legacyThemesOut = join(root, "shiki-themes", "generated");
+const langsAssets = join(root, "shiki-langs", "assets");
+const themesAssets = join(root, "shiki-themes", "assets");
 
 type JsonObject = Record<string, unknown>;
+let staticDeclarations: string[] = [];
+let staticIndex = 0;
 
 function object(value: unknown): JsonObject {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -59,19 +63,37 @@ function macroIdent(value: string): string | undefined {
 }
 
 function staticString(value: unknown): string {
-  return typeof value === "string" ? `Some(${rustString(value)})` : "None";
+  return typeof value === "string"
+    ? `Some(RawString::borrowed(${rustString(value)}))`
+    : "None";
 }
 
-function staticList(values: unknown, render: (value: unknown) => string): string {
+function staticList(
+  values: unknown,
+  render: (value: unknown) => string,
+  typeName: string,
+): string {
   const items = Array.isArray(values) ? values : [];
-  return `&[${items.map(render).join(",")}]`;
+  const name = `RAW_LIST_${staticIndex++}`;
+  staticDeclarations.push(
+    `static ${name}:[${typeName};${items.length}]=[${items.map(render).join(",")}];`,
+  );
+  return `RawList::borrowed(&${name})`;
 }
 
-function staticMap(values: JsonObject, render: (value: unknown) => string): string {
+function staticMap(
+  values: JsonObject,
+  render: (value: unknown) => string,
+  typeName: string,
+): string {
   const entries = Object.entries(values).sort(([left], [right]) => left.localeCompare(right));
-  return `&[${entries
-    .map(([key, value]) => `StaticRawMapEntry::new(${rustString(key)},${render(value)})`)
-    .join(",")}]`;
+  const name = `RAW_MAP_${staticIndex++}`;
+  staticDeclarations.push(
+    `static ${name}:[RawMapEntry<'static,${typeName}>;${entries.length}]=[${entries
+      .map(([key, value]) => `RawMapEntry::new(${rustString(key)},${render(value)})`)
+      .join(",")}];`,
+  );
+  return `RawMap::borrowed(&${name})`;
 }
 
 function captures(value: unknown): string {
@@ -79,19 +101,25 @@ function captures(value: unknown): string {
     ? value.map((item, index) => [String(index), item])
     : Object.entries(object(value));
   const normalized = Object.fromEntries(entries.filter(([key]) => /^\d+$/.test(key)));
-  return staticMap(normalized, (capture) => {
-    if (typeof capture === "string")
-      return `StaticRawRule{name:Some(${rustString(capture)}),..StaticRawRule::EMPTY}`;
-    return rule(capture);
-  });
+  return staticMap(
+    normalized,
+    (capture) => {
+      if (typeof capture === "string") return rule({ name: capture });
+      return rule(capture);
+    },
+    "RawRule<'static>",
+  );
 }
 
 function repository(value: unknown): string {
-  return staticMap(object(value), (entry) => {
-    if (Array.isArray(entry))
-      return `StaticRawRule{patterns:${staticList(entry, rule)},..StaticRawRule::EMPTY}`;
-    return rule(entry);
-  });
+  return staticMap(
+    object(value),
+    (entry) => {
+      if (Array.isArray(entry)) return rule({ patterns: entry });
+      return rule(entry);
+    },
+    "RawRule<'static>",
+  );
 }
 
 function boolish(value: unknown): boolean {
@@ -105,7 +133,22 @@ function boolish(value: unknown): boolean {
 
 function rule(value: unknown): string {
   const raw = object(value);
-  const fields: string[] = [];
+  const fields = new Map<string, string>([
+    ["include", "None"],
+    ["name", "None"],
+    ["content_name", "None"],
+    ["match_pattern", "None"],
+    ["captures", "RawMap::EMPTY"],
+    ["begin", "None"],
+    ["begin_captures", "RawMap::EMPTY"],
+    ["end", "None"],
+    ["end_captures", "RawMap::EMPTY"],
+    ["while_pattern", "None"],
+    ["while_captures", "RawMap::EMPTY"],
+    ["patterns", "RawList::EMPTY"],
+    ["repository", "RawMap::EMPTY"],
+    ["apply_end_pattern_last", "false"],
+  ]);
   const strings: [string, string][] = [
     ["include", "include"],
     ["name", "name"],
@@ -117,7 +160,7 @@ function rule(value: unknown): string {
   ];
   for (const [jsonName, rustName] of strings) {
     if (typeof raw[jsonName] === "string")
-      fields.push(`${rustName}:${staticString(raw[jsonName])}`);
+      fields.set(rustName, staticString(raw[jsonName]));
   }
   const maps: [string, string, (value: unknown) => string][] = [
     ["captures", "captures", captures],
@@ -127,59 +170,49 @@ function rule(value: unknown): string {
     ["repository", "repository", repository],
   ];
   for (const [jsonName, rustName, render] of maps) {
-    if (raw[jsonName] !== undefined) fields.push(`${rustName}:${render(raw[jsonName])}`);
+    if (raw[jsonName] !== undefined) fields.set(rustName, render(raw[jsonName]));
   }
-  if (Array.isArray(raw.patterns)) fields.push(`patterns:${staticList(raw.patterns, rule)}`);
-  if (boolish(raw.applyEndPatternLast)) fields.push("apply_end_pattern_last:true");
-  return fields.length === 0
-    ? "StaticRawRule::EMPTY"
-    : fields.length === 14
-      ? `StaticRawRule{${fields.join(",")}}`
-      : `StaticRawRule{${fields.join(",")},..StaticRawRule::EMPTY}`;
+  if (Array.isArray(raw.patterns))
+    fields.set("patterns", staticList(raw.patterns, rule, "RawRule<'static>"));
+  if (boolish(raw.applyEndPatternLast)) fields.set("apply_end_pattern_last", "true");
+  return `RawRule{${[...fields].map(([name, value]) => `${name}:${value}`).join(",")}}`;
 }
 
 function grammar(value: unknown): string {
   const raw = object(value);
-  return `StaticRawGrammar{
+  return `RawGrammar{
     name:${staticString(raw.name)},
-    scope_name:${rustString(String(raw.scopeName ?? ""))},
-    patterns:${staticList(raw.patterns, rule)},
+    scope_name:RawString::borrowed(${rustString(String(raw.scopeName ?? ""))}),
+    patterns:${staticList(raw.patterns, rule, "RawRule<'static>")},
     repository:${repository(raw.repository)},
-    injections:${staticMap(object(raw.injections), rule)},
+    injections:${staticMap(object(raw.injections), rule, "RawRule<'static>")},
     injection_selector:${staticString(raw.injectionSelector)},
 }`;
 }
 
 function themeScope(value: unknown): string {
-  if (typeof value === "string") return `StaticRawThemeScope::String(${rustString(value)})`;
+  if (typeof value === "string")
+    return `RawThemeScope::String(RawString::borrowed(${rustString(value)}))`;
   if (Array.isArray(value))
-    return `StaticRawThemeScope::Array(${staticList(value, (item) => rustString(String(item)))})`;
-  return "StaticRawThemeScope::Missing";
+    return `RawThemeScope::Array(${staticList(value, (item) => `RawString::borrowed(${rustString(String(item))})`, "RawString<'static>")})`;
+  return "RawThemeScope::Missing";
 }
 
 function themeSettings(value: unknown): string {
   const raw = object(value);
-  const fields: string[] = [];
-  if (typeof raw.foreground === "string") fields.push(`foreground:${staticString(raw.foreground)}`);
-  if (typeof raw.background === "string") fields.push(`background:${staticString(raw.background)}`);
-  if (typeof raw.fontStyle === "string") fields.push(`font_style:${staticString(raw.fontStyle)}`);
-  return fields.length === 0
-    ? "StaticRawThemeSettings::EMPTY"
-    : fields.length === 3
-      ? `StaticRawThemeSettings{${fields.join(",")}}`
-      : `StaticRawThemeSettings{${fields.join(",")},..StaticRawThemeSettings::EMPTY}`;
+  return `RawThemeSettings{
+    foreground:${staticString(raw.foreground)},
+    background:${staticString(raw.background)},
+    font_style:${staticString(raw.fontStyle)},
+  }`;
 }
 
 function themeRule(value: unknown): string {
   const raw = object(value);
-  const fields: string[] = [];
-  if (raw.scope !== undefined) fields.push(`scope:${themeScope(raw.scope)}`);
-  if (raw.settings !== undefined) fields.push(`settings:${themeSettings(raw.settings)}`);
-  return fields.length === 0
-    ? "StaticRawThemeRule::EMPTY"
-    : fields.length === 2
-      ? `StaticRawThemeRule{${fields.join(",")}}`
-      : `StaticRawThemeRule{${fields.join(",")},..StaticRawThemeRule::EMPTY}`;
+  return `RawThemeRule{
+    scope:${themeScope(raw.scope)},
+    settings:${themeSettings(raw.settings)},
+  }`;
 }
 
 function rawTheme(value: unknown): string {
@@ -190,13 +223,13 @@ function rawTheme(value: unknown): string {
       .filter((key) => typeof sourceColors[key] === "string")
       .map((key) => [key, sourceColors[key]]),
   );
-  return `StaticRawTheme{
+  return `RawTheme{
     name:${staticString(raw.name)},
     fg:${staticString(raw.fg)},
     bg:${staticString(raw.bg)},
-    colors:${staticMap(colors, (color) => rustString(String(color)))},
-    settings:${staticList(raw.settings, themeRule)},
-    token_colors:${staticList(raw.tokenColors, themeRule)},
+    colors:${staticMap(colors, (color) => `RawString::borrowed(${rustString(String(color))})`, "RawString<'static>")},
+    settings:${staticList(raw.settings, themeRule, "RawThemeRule<'static>")},
+    token_colors:${staticList(raw.tokenColors, themeRule, "RawThemeRule<'static>")},
 }`;
 }
 
@@ -205,8 +238,9 @@ function sourcePath(info: GrammarInfo): string {
 }
 
 async function generateLanguages(): Promise<void> {
-  await rm(langsOut, { recursive: true, force: true });
-  await mkdir(langsOut, { recursive: true });
+  await rm(legacyLangsOut, { recursive: true, force: true });
+  await rm(langsAssets, { recursive: true, force: true });
+  await mkdir(langsAssets, { recursive: true });
 
   const all = [...grammars, ...injections].sort((a, b) => a.name.localeCompare(b.name));
   const byName = new Map(all.map((info) => [info.name, info]));
@@ -222,27 +256,21 @@ async function generateLanguages(): Promise<void> {
     const aliases = info.aliases ?? [];
     const injectTo = (info as GrammarInfo & { injectTo?: string[] }).injectTo ?? [];
     const raw = await Bun.file(sourcePath(info)).json();
+    await writeFile(join(langsAssets, `${info.name}.json`), JSON.stringify(raw));
 
-    await writeFile(
-      join(langsOut, `${info.name}.rs`),
-      `// Generated by script/main.ts. Do not edit.
-#[allow(unused_imports)]
-use shiki::{LanguageDefinition, StaticRawGrammar, StaticRawMapEntry, StaticRawRule};
+    modules.push(`pub mod ${moduleName} {
+use shiki::LanguageDefinition;
 
-pub static GRAMMAR: StaticRawGrammar = ${grammar(raw)};
-
-pub static ${symbol}: LanguageDefinition = LanguageDefinition::new(
+pub static ${symbol}: LanguageDefinition = LanguageDefinition::from_json(
     ${rustString(info.name)},
     ${rustString(info.displayName || info.name)},
     ${rustString(info.scopeName)},
     &[${aliases.map(rustString).join(",")}],
     &[${deps.map(rustString).join(",")}],
     &[${injectTo.map(rustString).join(",")}],
-    &GRAMMAR,
+    include_str!("../assets/${info.name}.json"),
 );
-`,
-    );
-    modules.push(`#[path = "../generated/${info.name}.rs"] pub mod ${moduleName};`);
+}`);
     exports.push(`pub use ${moduleName}::${symbol};`);
 
     const closure: GrammarInfo[] = [];
@@ -316,8 +344,9 @@ macro_rules! languages {
 }
 
 async function generateThemes(): Promise<void> {
-  await rm(themesOut, { recursive: true, force: true });
-  await mkdir(themesOut, { recursive: true });
+  await rm(legacyThemesOut, { recursive: true, force: true });
+  await rm(themesAssets, { recursive: true, force: true });
+  await mkdir(themesAssets, { recursive: true });
 
   const sorted = [...themes].sort((a, b) => a.name.localeCompare(b.name));
   const modules: string[] = [];
@@ -327,24 +356,19 @@ async function generateThemes(): Promise<void> {
     const fileName = `${info.name}.json`;
     const source = join(root, "node_modules", "tm-themes", "themes", fileName);
     const raw = await Bun.file(source).json();
+    await writeFile(join(themesAssets, fileName), JSON.stringify(raw));
     const symbol = ident(info.name);
     const moduleName = moduleIdent("theme", info.name);
 
-    await writeFile(
-      join(themesOut, `${info.name}.rs`),
-      `// Generated by script/main.ts. Do not edit.
-use shiki::{StaticRawMapEntry, StaticRawTheme, StaticRawThemeRule, StaticRawThemeScope, StaticRawThemeSettings, ThemeDefinition};
+    modules.push(`pub mod ${moduleName} {
+use shiki::ThemeDefinition;
 
-pub static THEME: StaticRawTheme = ${rawTheme(raw)};
-
-pub static ${symbol}: ThemeDefinition = ThemeDefinition::new(
+pub static ${symbol}: ThemeDefinition = ThemeDefinition::from_json(
     ${rustString(info.name)},
     ${rustString(info.displayName || info.name)},
-    &THEME,
+    include_str!("../assets/${info.name}.json"),
 );
-`,
-    );
-    modules.push(`#[path = "../generated/${info.name}.rs"] pub mod ${moduleName};`);
+}`);
     exports.push(`pub use ${moduleName}::${symbol};`);
     const token = macroIdent(info.name);
     if (token) macroArms.push(`    (${token}) => { &$crate::generated::${symbol} };`);

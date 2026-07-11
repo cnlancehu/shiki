@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["shiki", "shiki-langs", "shiki-themes"]
+members = ["shiki", "shiki-langs", "shiki-macros", "shiki-themes"]
 
 [workspace.package]
 edition = "2024"
@@ -13,10 +13,14 @@ onig_sys = { version = "69.9.3", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 thiserror = "2.0.18"
+proc-macro2 = "1.0.106"
+quote = "1.0.46"
+syn = { version = "2.0.118", features = ["full"] }
 
-shiki = { path = "shiki" }
-shiki-langs = { path = "shiki-langs" }
-shiki-themes = { path = "shiki-themes" }
+shiki = { version = "0.0.1", path = "shiki" }
+shiki-langs = { version = "0.0.1", path = "shiki-langs" }
+shiki-macros = { version = "0.0.1", path = "shiki-macros" }
+shiki-themes = { version = "0.0.1", path = "shiki-themes" }
 
 [profile.release]
 codegen-units = 1

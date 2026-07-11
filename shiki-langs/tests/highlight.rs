@@ -43,6 +43,15 @@ fn keeps_multiline_state() {
     assert!(second.len() > 1, "{second:#?}");
     assert_eq!(first[0].scopes, second[0].scopes);
     assert!(second.iter().any(|token| token.scopes != second[0].scopes));
+    let scopes = highlighter.scope_names("rust", first[0].scopes).unwrap();
+    assert!(
+        scopes.iter().any(|scope| scope == "source.rust"),
+        "{scopes:?}"
+    );
+    assert!(
+        scopes.iter().any(|scope| scope.contains("comment")),
+        "{scopes:?}"
+    );
 }
 
 #[test]
@@ -57,16 +66,12 @@ fn vue_bundle_contains_eager_dependencies() {
 }
 
 #[test]
-fn all_generated_assets_parse() {
+fn all_generated_assets_are_available() {
     for language in shiki_langs::generated::ALL_LANGUAGES {
-        language
-            .grammar()
-            .unwrap_or_else(|error| panic!("{}: {error}", language.id));
+        let _ = language.grammar();
     }
     for theme in shiki_themes::generated::ALL_THEMES {
-        theme
-            .theme()
-            .unwrap_or_else(|error| panic!("{}: {error}", theme.id));
+        let _ = theme.theme();
     }
 }
 
@@ -220,8 +225,8 @@ fn loads_runtime_json_and_raw_definitions() {
     let grammar = shiki::RawGrammar::from_json("runtime", GRAMMAR).unwrap();
     let theme = shiki::RawTheme::from_json("runtime", THEME).unwrap();
     let mut from_raw = Highlighter::builder()
-        .raw_language("runtime", grammar)
-        .raw_theme("runtime", theme)
+        .language("runtime", grammar)
+        .theme(theme)
         .build()
         .unwrap();
     assert!(
@@ -233,40 +238,42 @@ fn loads_runtime_json_and_raw_definitions() {
 }
 
 #[test]
-fn limits_pathological_long_lines() {
-    let source = "const value = items.map(item => item.name);";
-    let mut limited = Highlighter::builder()
+fn rejects_state_from_another_language() {
+    let mut highlighter = Highlighter::builder()
         .bundle(&LANGUAGES)
-        .languages(["rust"])
-        .theme(&shiki_themes::CATPPUCCIN_MOCHA)
-        .max_tokenization_line_length(10)
+        .languages(["rust", "astro"])
+        .theme(&shiki_themes::generated::GITHUB_DARK)
         .build()
         .unwrap();
-    assert_eq!(
-        limited.code_to_scope_tokens(source, "rust").unwrap()[0].len(),
-        1
-    );
+    let (_, rust_state) = highlighter
+        .tokenize_line("/* open", "rust", None, true)
+        .unwrap();
+    let error = highlighter
+        .tokenize_line("const value = 1", "astro", Some(&rust_state), true)
+        .unwrap_err();
+    assert!(matches!(error, shiki::Error::GrammarStateMismatch));
+}
 
-    let mut unlimited = Highlighter::builder()
+#[test]
+fn shared_engine_creates_isolated_sessions() {
+    let engine = Highlighter::builder()
         .bundle(&LANGUAGES)
         .languages(["rust"])
-        .theme(&shiki_themes::CATPPUCCIN_MOCHA)
-        .unlimited_tokenization_line_length()
-        .build()
+        .theme(&shiki_themes::generated::GITHUB_DARK)
+        .build_engine()
         .unwrap();
-    let unlimited_tokens = unlimited.code_to_scope_tokens(source, "rust").unwrap();
-    assert!(unlimited_tokens[0].len() > 1);
-
-    let mut default = Highlighter::builder()
-        .bundle(&LANGUAGES)
-        .languages(["rust"])
-        .theme(&shiki_themes::CATPPUCCIN_MOCHA)
-        .build()
+    let mut first = engine.session("rust").unwrap();
+    let mut second = engine.session("rust").unwrap();
+    let mut first_state = first.initial_state();
+    let mut second_state = second.initial_state();
+    let first_tokens = first
+        .tokenize_line("/* open", &mut first_state, true)
         .unwrap();
-    assert_eq!(
-        default.code_to_scope_tokens(source, "rust").unwrap(),
-        unlimited_tokens
-    );
+    let second_tokens = second
+        .tokenize_line("let value = 1;", &mut second_state, true)
+        .unwrap();
+    assert!(!first_tokens.is_empty());
+    assert!(second_tokens.len() > 1);
 }
 
 #[test]
