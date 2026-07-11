@@ -319,6 +319,7 @@ ${exports.join("\n")}
 ${groups.join("\n")}
 
 pub static ALL_LANGUAGES: LanguageGroup = &[${all.map((item) => `&${ident(item.name)}`).join(",")}];
+pub static ALL_LANGUAGE_GROUPS: &[LanguageGroup] = &[${all.map((item) => `${ident(item.name)}_GROUP`).join(",")}];
 `,
   );
 

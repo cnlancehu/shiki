@@ -1,8 +1,6 @@
 use shiki::{Highlighter, HtmlOptions, LanguageBundle};
 
 static LANGUAGES: LanguageBundle = shiki_langs::languages![astro, rust, vue];
-static ALL_LANGUAGES: LanguageBundle =
-    LanguageBundle::from_groups(&[shiki_langs::generated::ALL_LANGUAGES]);
 
 #[test]
 fn highlights_rust_to_html() {
@@ -73,6 +71,15 @@ fn all_generated_assets_are_available() {
     for theme in shiki_themes::generated::ALL_THEMES {
         let _ = theme.theme();
     }
+}
+
+#[test]
+fn all_bundle_contains_every_generated_language() {
+    let ids = shiki_langs::all()
+        .definitions()
+        .map(|language| language.id)
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(ids.len(), shiki_langs::generated::ALL_LANGUAGES.len());
 }
 
 #[test]
@@ -283,9 +290,9 @@ fn all_generated_grammars_compile_root_scanner() {
         .iter()
         .map(|language| language.id)
         .collect();
+    let all = shiki_langs::all();
     let mut highlighter = Highlighter::builder()
-        .bundle(&ALL_LANGUAGES)
-        .languages(ids.iter().copied())
+        .bundle(&all)
         .theme(&shiki_themes::generated::GITHUB_DARK)
         .build()
         .unwrap();
