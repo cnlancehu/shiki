@@ -1,24 +1,20 @@
 use std::{collections::HashMap, sync::Arc};
 
-use serde::{Deserialize, Serialize};
-
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
     Left,
     Normal,
     Right,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ScopeSelector {
     pub priority: Priority,
-    expression: Expression,
+    pub expression: Expression,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-enum Expression {
+#[derive(Debug, Clone)]
+pub enum Expression {
     Path(Vec<SelectorId>),
     And(Vec<Expression>),
     Or(Vec<Expression>),

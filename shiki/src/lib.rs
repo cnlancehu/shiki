@@ -106,3 +106,13 @@ pub use tokenizer::{
     GrammarState, MultiThemedToken, RegexLimits, ScopeStackId, ScopeToken,
     ThemeId, ThemeTokenStyle, ThemedToken, TokenizerCacheStats,
 };
+
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::grammar::{
+        Capture, CompiledGrammar, Injection, Rule, RuleKind, ScopeName,
+        ScopePart, ScopeTemplate,
+    };
+    pub use crate::matcher::{Expression, Priority, ScopeSelector};
+    pub use crate::theme::{ColorId, Style, Theme, ThemeRule};
+}

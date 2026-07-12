@@ -17,5 +17,5 @@ fn main() {
     let second = make_highlighter();
     let warm = started.elapsed();
     std::hint::black_box((first, second));
-    println!("precompiled_cold={cold:?} precompiled_warm={warm:?}");
+    println!("generated_rust_cold={cold:?} generated_rust_warm={warm:?}");
 }

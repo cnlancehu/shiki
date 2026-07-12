@@ -1,7 +1,7 @@
 use shiki_macros::{highlighter, highlighter_engine};
 
 #[test]
-fn creates_a_highlighter_from_a_precompiled_snapshot() {
+fn creates_a_highlighter_from_generated_rust() {
     let mut highlighter = highlighter! {
         languages: ["rust"],
         themes: [("dark", "catppuccin-mocha")],

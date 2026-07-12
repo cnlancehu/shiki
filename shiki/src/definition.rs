@@ -17,7 +17,9 @@ pub struct LanguageDefinition {
     pub dependencies: &'static [&'static str],
     pub inject_to: &'static [&'static str],
     grammar: Option<&'static RawGrammar<'static>>,
+    #[cfg(feature = "json")]
     source: Option<&'static str>,
+    #[cfg(feature = "json")]
     parsed: OnceLock<RawGrammar<'static>>,
 }
 
@@ -39,11 +41,14 @@ impl LanguageDefinition {
             dependencies,
             inject_to,
             grammar: Some(grammar),
+            #[cfg(feature = "json")]
             source: None,
+            #[cfg(feature = "json")]
             parsed: OnceLock::new(),
         }
     }
 
+    #[cfg(feature = "json")]
     pub const fn from_json(
         id: &'static str,
         display_name: &'static str,
@@ -70,14 +75,19 @@ impl LanguageDefinition {
         if let Some(grammar) = self.grammar {
             return grammar;
         }
-        self.parsed.get_or_init(|| {
-            RawGrammar::from_json(
-                self.id,
-                self.source
-                    .expect("language definition has no grammar source"),
-            )
-            .expect("bundled grammar JSON is invalid")
-        })
+        #[cfg(feature = "json")]
+        {
+            self.parsed.get_or_init(|| {
+                RawGrammar::from_json(
+                    self.id,
+                    self.source
+                        .expect("language definition has no grammar source"),
+                )
+                .expect("bundled grammar JSON is invalid")
+            })
+        }
+        #[cfg(not(feature = "json"))]
+        unreachable!("a non-JSON language definition must contain a grammar")
     }
 }
 
@@ -167,7 +177,9 @@ pub struct ThemeDefinition {
     pub id: &'static str,
     pub display_name: &'static str,
     raw: Option<&'static RawTheme<'static>>,
+    #[cfg(feature = "json")]
     source: Option<&'static str>,
+    #[cfg(feature = "json")]
     parsed_raw: OnceLock<RawTheme<'static>>,
     parsed_theme: OnceLock<Arc<Theme>>,
 }
@@ -182,12 +194,15 @@ impl ThemeDefinition {
             id,
             display_name,
             raw: Some(raw),
+            #[cfg(feature = "json")]
             source: None,
+            #[cfg(feature = "json")]
             parsed_raw: OnceLock::new(),
             parsed_theme: OnceLock::new(),
         }
     }
 
+    #[cfg(feature = "json")]
     pub const fn from_json(
         id: &'static str,
         display_name: &'static str,
@@ -207,13 +222,18 @@ impl ThemeDefinition {
         if let Some(raw) = self.raw {
             return raw;
         }
-        self.parsed_raw.get_or_init(|| {
-            RawTheme::from_json(
-                self.id,
-                self.source.expect("theme definition has no source"),
-            )
-            .expect("bundled theme JSON is invalid")
-        })
+        #[cfg(feature = "json")]
+        {
+            self.parsed_raw.get_or_init(|| {
+                RawTheme::from_json(
+                    self.id,
+                    self.source.expect("theme definition has no source"),
+                )
+                .expect("bundled theme JSON is invalid")
+            })
+        }
+        #[cfg(not(feature = "json"))]
+        unreachable!("a non-JSON theme definition must contain raw theme data")
     }
 
     pub fn theme(&'static self) -> Arc<Theme> {

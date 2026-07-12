@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
-use serde::{Deserialize, Serialize};
+#[cfg(feature = "json")]
+use serde::Deserialize;
 
 use crate::{
     error::{Error, Result},
@@ -8,56 +9,80 @@ use crate::{
     raw::{RawList, RawMap, RawString},
 };
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "json", derive(Deserialize))]
+#[cfg_attr(feature = "json", serde(rename_all = "camelCase"))]
 pub struct RawGrammar<'a> {
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub name: Option<RawString<'a>>,
     pub scope_name: RawString<'a>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub patterns: RawList<'a, RawRule<'a>>,
-    #[serde(default, deserialize_with = "deserialize_repository")]
+    #[cfg_attr(
+        feature = "json",
+        serde(default, deserialize_with = "deserialize_repository")
+    )]
     pub repository: RawMap<'a, RawRule<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub injections: RawMap<'a, RawRule<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub injection_selector: Option<RawString<'a>>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "json", derive(Deserialize))]
+#[cfg_attr(feature = "json", serde(rename_all = "camelCase"))]
 pub struct RawRule<'a> {
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub include: Option<RawString<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub name: Option<RawString<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub content_name: Option<RawString<'a>>,
-    #[serde(default, rename = "match")]
+    #[cfg_attr(feature = "json", serde(default, rename = "match"))]
     pub match_pattern: Option<RawString<'a>>,
-    #[serde(default, deserialize_with = "deserialize_captures")]
+    #[cfg_attr(
+        feature = "json",
+        serde(default, deserialize_with = "deserialize_captures")
+    )]
     pub captures: RawMap<'a, RawRule<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub begin: Option<RawString<'a>>,
-    #[serde(default, deserialize_with = "deserialize_captures")]
+    #[cfg_attr(
+        feature = "json",
+        serde(default, deserialize_with = "deserialize_captures")
+    )]
     pub begin_captures: RawMap<'a, RawRule<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub end: Option<RawString<'a>>,
-    #[serde(default, deserialize_with = "deserialize_captures")]
+    #[cfg_attr(
+        feature = "json",
+        serde(default, deserialize_with = "deserialize_captures")
+    )]
     pub end_captures: RawMap<'a, RawRule<'a>>,
-    #[serde(default, rename = "while")]
+    #[cfg_attr(feature = "json", serde(default, rename = "while"))]
     pub while_pattern: Option<RawString<'a>>,
-    #[serde(default, deserialize_with = "deserialize_captures")]
+    #[cfg_attr(
+        feature = "json",
+        serde(default, deserialize_with = "deserialize_captures")
+    )]
     pub while_captures: RawMap<'a, RawRule<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub patterns: RawList<'a, RawRule<'a>>,
-    #[serde(default, deserialize_with = "deserialize_repository")]
+    #[cfg_attr(
+        feature = "json",
+        serde(default, deserialize_with = "deserialize_repository")
+    )]
     pub repository: RawMap<'a, RawRule<'a>>,
-    #[serde(default, deserialize_with = "deserialize_boolish")]
+    #[cfg_attr(
+        feature = "json",
+        serde(default, deserialize_with = "deserialize_boolish")
+    )]
     pub apply_end_pattern_last: bool,
 }
 
 impl RawGrammar<'static> {
+    #[cfg(feature = "json")]
     pub fn from_json(name: &str, source: &str) -> Result<Self> {
         serde_json::from_str(source).map_err(|source| Error::InvalidGrammar {
             name: name.to_owned(),
@@ -90,23 +115,23 @@ pub type PatternSourceId = u32;
 pub type ScopeNameId = u32;
 pub type ScopeTemplateId = u32;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct ScopeName {
     pub scopes: Box<[ScopeTemplateId]>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct ScopeTemplate {
     pub parts: Box<[ScopePart]>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub enum ScopePart {
     Literal(Arc<str>),
     Capture(usize),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Capture {
     pub index: usize,
     pub name: Option<ScopeNameId>,
@@ -114,7 +139,7 @@ pub struct Capture {
     pub retokenize: Option<RuleId>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum RuleKind {
     Match {
         pattern: PatternSourceId,
@@ -141,14 +166,14 @@ pub enum RuleKind {
     Placeholder,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Rule {
     pub name: Option<ScopeNameId>,
     pub content_name: Option<ScopeNameId>,
     pub kind: RuleKind,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct CompiledGrammar {
     pub root_scope_name: ScopeNameId,
     pub root: RuleId,
@@ -160,7 +185,7 @@ pub struct CompiledGrammar {
     pub injections: Vec<Injection>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Injection {
     pub selector: ScopeSelector,
     pub rule: RuleId,
@@ -576,6 +601,7 @@ fn normalize_pattern(pattern: &str) -> String {
     output
 }
 
+#[cfg(feature = "json")]
 fn deserialize_captures<'de, D>(
     deserializer: D,
 ) -> std::result::Result<RawMap<'static, RawRule<'static>>, D::Error>
@@ -619,6 +645,7 @@ where
     Ok(RawMap::Owned(captures.into_iter().collect()))
 }
 
+#[cfg(feature = "json")]
 fn deserialize_boolish<'de, D>(
     deserializer: D,
 ) -> std::result::Result<bool, D::Error>
@@ -638,6 +665,7 @@ where
     })
 }
 
+#[cfg(feature = "json")]
 fn deserialize_repository<'de, D>(
     deserializer: D,
 ) -> std::result::Result<RawMap<'static, RawRule<'static>>, D::Error>

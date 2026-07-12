@@ -7,8 +7,6 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use serde::{Deserialize, Serialize};
-
 use crate::{
     error::{Error, Result},
     grammar::{
@@ -44,7 +42,7 @@ pub struct ThemeTokenStyle {
 
 pub type ThemeId = u16;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy)]
 pub struct RegexLimits {
     pub match_retry_limit: u64,
     pub search_retry_limit: u64,

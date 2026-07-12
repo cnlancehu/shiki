@@ -19,11 +19,13 @@ pub enum Error {
     ThemeNotBundled(String),
     #[error("theme ID {0} does not belong to this highlighter")]
     InvalidThemeId(u16),
+    #[cfg(feature = "json")]
     #[error("invalid grammar JSON for `{name}`: {source}")]
     InvalidGrammar {
         name: String,
         source: serde_json::Error,
     },
+    #[cfg(feature = "json")]
     #[error("invalid theme JSON for `{name}`: {source}")]
     InvalidTheme {
         name: String,
@@ -33,8 +35,6 @@ pub enum Error {
     InvalidRegex { pattern: String, message: String },
     #[error("regular expression search failed: {message}")]
     RegexSearch { message: String },
-    #[error("invalid precompiled highlighter: {0}")]
-    InvalidPrecompiled(String),
     #[error("grammar include `{include}` could not be resolved in `{grammar}`")]
     UnresolvedInclude { grammar: String, include: String },
     #[error("no language has been selected")]

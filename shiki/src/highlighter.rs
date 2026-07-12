@@ -6,8 +6,6 @@ use std::{
     },
 };
 
-use serde::{Deserialize, Serialize};
-
 use crate::{
     definition::{LanguageBundle, ThemeDefinition},
     error::{Error, Result},
@@ -38,24 +36,6 @@ pub struct EngineInner {
     pub themes: Vec<NamedTheme>,
     pub regex_limits: RegexLimits,
 }
-
-#[derive(Serialize, Deserialize)]
-struct PrecompiledTheme {
-    name: String,
-    css_name: String,
-    theme: Theme,
-}
-
-#[derive(Serialize, Deserialize)]
-struct PrecompiledEngine {
-    version: u32,
-    languages: Vec<(String, usize)>,
-    compiled: Vec<crate::grammar::CompiledGrammar>,
-    themes: Vec<PrecompiledTheme>,
-    regex_limits: RegexLimits,
-}
-
-const PRECOMPILED_VERSION: u32 = 1;
 
 #[derive(Clone)]
 pub struct HighlighterEngine {
@@ -481,75 +461,38 @@ impl HighlighterEngine {
     }
 
     #[doc(hidden)]
-    pub fn __to_precompiled_bytes(&self) -> Result<Vec<u8>> {
-        let mut languages = self
-            .inner
-            .languages
-            .iter()
-            .map(|(name, index)| (name.clone(), *index))
-            .collect::<Vec<_>>();
-        languages.sort_by(|left, right| left.0.cmp(&right.0));
-        let compiled = self
-            .inner
-            .compiled
-            .iter()
-            .map(|language| language.grammar.as_ref().clone())
-            .collect();
-        let themes = self
-            .inner
-            .themes
-            .iter()
-            .map(|theme| PrecompiledTheme {
-                name: theme.name.clone(),
-                css_name: theme.css_name.clone(),
-                theme: theme.theme.as_ref().clone(),
-            })
-            .collect();
-        serde_json::to_vec(&PrecompiledEngine {
-            version: PRECOMPILED_VERSION,
-            languages,
-            compiled,
-            themes,
-            regex_limits: self.inner.regex_limits,
-        })
-        .map_err(|error| Error::InvalidPrecompiled(error.to_string()))
-    }
-
-    #[doc(hidden)]
-    pub fn __from_precompiled_bytes(bytes: &[u8]) -> Result<Self> {
-        let data: PrecompiledEngine = serde_json::from_slice(bytes)
-            .map_err(|error| Error::InvalidPrecompiled(error.to_string()))?;
-        if data.version != PRECOMPILED_VERSION {
-            return Err(Error::InvalidPrecompiled(format!(
-                "snapshot version {} is not supported (expected {PRECOMPILED_VERSION})",
-                data.version
-            )));
-        }
-        let compiled = data
-            .compiled
+    pub fn __from_rust_parts(
+        languages: Vec<(&'static str, usize)>,
+        grammars: Vec<crate::grammar::CompiledGrammar>,
+        themes: Vec<(&'static str, &'static str, Theme)>,
+        regex_limits: RegexLimits,
+    ) -> Self {
+        let compiled = grammars
             .into_iter()
             .map(|grammar| CompiledLanguage {
                 grammar: Arc::new(grammar),
                 grammar_id: NEXT_GRAMMAR_ID.fetch_add(1, Ordering::Relaxed),
             })
             .collect();
-        let themes = data
-            .themes
+        let themes = themes
             .into_iter()
-            .map(|theme| NamedTheme {
-                name: theme.name,
-                css_name: theme.css_name,
-                theme: Arc::new(theme.theme),
+            .map(|(name, css_name, theme)| NamedTheme {
+                name: name.to_owned(),
+                css_name: css_name.to_owned(),
+                theme: Arc::new(theme),
             })
             .collect();
-        Ok(Self {
+        Self {
             inner: Arc::new(EngineInner {
-                languages: data.languages.into_iter().collect(),
+                languages: languages
+                    .into_iter()
+                    .map(|(name, index)| (name.to_owned(), index))
+                    .collect(),
                 compiled,
                 themes,
-                regex_limits: data.regex_limits,
+                regex_limits,
             }),
-        })
+        }
     }
 }
 
@@ -638,6 +581,7 @@ impl HighlighterBuilder {
         self
     }
 
+    #[cfg(feature = "json")]
     pub fn json_language(
         self,
         id: impl Into<String>,
@@ -648,6 +592,7 @@ impl HighlighterBuilder {
         Ok(self.language(id, grammar))
     }
 
+    #[cfg(feature = "json")]
     pub fn json_theme(
         mut self,
         name: impl Into<String>,

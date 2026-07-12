@@ -123,8 +123,9 @@ Legacy `Highlighter` values can release their accumulated dynamic caches with
 ## Compile-time Highlighters
 
 `shiki-macros` compiles bundled TextMate grammars and themes while the proc
-macro runs. The expansion embeds a versioned grammar/theme snapshot and keeps
-one shared engine per macro call site.
+macro runs. The expansion generates Rust grammar/theme structures directly and
+keeps one shared engine per macro call site; it performs no runtime snapshot
+deserialization.
 
 ```rust
 let mut highlighter = shiki_macros::highlighter! {
@@ -141,3 +142,12 @@ Use `highlighter_engine!` with the same input to obtain a cloneable
 so they are initialized and cached on first use; JSON parsing, grammar
 expansion, injection resolution, scope interning, and theme compilation have
 already happened at Rust compile time.
+
+Applications that only consume generated highlighters can remove the target-side
+JSON stack while the proc macro keeps parsing bundled assets on the host:
+
+```toml
+[dependencies]
+shiki = { version = "0.0.1", default-features = false }
+shiki-macros = "0.0.1"
+```

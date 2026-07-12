@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "json")]
 use serde::Deserialize;
 
 #[derive(Debug, Clone)]
@@ -47,6 +48,7 @@ impl<'a> From<&'a str> for RawString<'a> {
     }
 }
 
+#[cfg(feature = "json")]
 impl<'de, 'a> Deserialize<'de> for RawString<'a> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -94,6 +96,7 @@ impl<T> Deref for RawList<'_, T> {
     }
 }
 
+#[cfg(feature = "json")]
 impl<'de, 'a, T> Deserialize<'de> for RawList<'a, T>
 where
     T: Deserialize<'de>,
@@ -174,6 +177,7 @@ impl<'a, T> RawMap<'a, T> {
     }
 }
 
+#[cfg(feature = "json")]
 impl<'de, 'a, T> Deserialize<'de> for RawMap<'a, T>
 where
     T: Deserialize<'de>,

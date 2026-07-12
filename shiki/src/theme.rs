@@ -1,15 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
-use serde::{Deserialize, Serialize};
+#[cfg(feature = "json")]
+use serde::Deserialize;
 
-use crate::{
-    error::{Error, Result},
-    raw::{RawList, RawMap, RawString},
-};
+#[cfg(feature = "json")]
+use crate::error::{Error, Result};
+use crate::raw::{RawList, RawMap, RawString};
 
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FontStyle(pub u8);
 
 impl FontStyle {
@@ -31,8 +29,8 @@ impl FontStyle {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ColorId(u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ColorId(pub u32);
 
 impl ColorId {
     const fn index(self) -> usize {
@@ -40,35 +38,33 @@ impl ColorId {
     }
 }
 
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Style {
     pub foreground: Option<ColorId>,
     pub background: Option<ColorId>,
     pub font_style: Option<FontStyle>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ThemeRule {
-    target: SelectorId,
-    parents: Vec<SelectorId>,
-    target_depth: usize,
-    style: Style,
-    order: usize,
+#[derive(Debug, Clone)]
+pub struct ThemeRule {
+    pub target: SelectorId,
+    pub parents: Vec<SelectorId>,
+    pub target_depth: usize,
+    pub style: Style,
+    pub order: usize,
 }
 
 type SelectorId = u32;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Theme {
     pub name: Arc<str>,
     pub foreground: Arc<str>,
     pub background: Arc<str>,
-    colors: Vec<Arc<str>>,
-    foreground_id: ColorId,
-    selectors: Vec<Arc<str>>,
-    rules: Vec<ThemeRule>,
+    pub colors: Vec<Arc<str>>,
+    pub foreground_id: ColorId,
+    pub selectors: Vec<Arc<str>>,
+    pub rules: Vec<ThemeRule>,
 }
 
 pub struct ThemeMatcher {
@@ -325,24 +321,29 @@ fn parse_font_style(value: &str) -> FontStyle {
     style
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "json", derive(Deserialize))]
+#[cfg_attr(feature = "json", serde(rename_all = "camelCase"))]
 pub struct RawTheme<'a> {
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub name: Option<RawString<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub fg: Option<RawString<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub bg: Option<RawString<'a>>,
-    #[serde(default, deserialize_with = "deserialize_string_map")]
+    #[cfg_attr(
+        feature = "json",
+        serde(default, deserialize_with = "deserialize_string_map")
+    )]
     pub colors: RawMap<'a, RawString<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub settings: RawList<'a, RawThemeRule<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub token_colors: RawList<'a, RawThemeRule<'a>>,
 }
 
 impl RawTheme<'static> {
+    #[cfg(feature = "json")]
     pub fn from_json(name: &str, source: &str) -> Result<Self> {
         serde_json::from_str(source).map_err(|source| Error::InvalidTheme {
             name: name.to_owned(),
@@ -351,16 +352,18 @@ impl RawTheme<'static> {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "json", derive(Deserialize))]
 pub struct RawThemeRule<'a> {
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub scope: RawThemeScope<'a>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub settings: RawThemeSettings<'a>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "json", derive(Deserialize))]
+#[cfg_attr(feature = "json", serde(untagged))]
 pub enum RawThemeScope<'a> {
     String(RawString<'a>),
     Array(RawList<'a, RawString<'a>>),
@@ -390,14 +393,15 @@ impl RawThemeScope<'_> {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "json", derive(Deserialize))]
+#[cfg_attr(feature = "json", serde(rename_all = "camelCase"))]
 pub struct RawThemeSettings<'a> {
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub foreground: Option<RawString<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub background: Option<RawString<'a>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "json", serde(default))]
     pub font_style: Option<RawString<'a>>,
 }
 
@@ -416,6 +420,7 @@ impl<'a> RawThemeSettings<'a> {
     };
 }
 
+#[cfg(feature = "json")]
 fn deserialize_string_map<'de, D>(
     deserializer: D,
 ) -> std::result::Result<RawMap<'static, RawString<'static>>, D::Error>
