@@ -1,6 +1,7 @@
-use std::env;
-use std::fs;
-use std::time::{Duration, Instant};
+use std::{
+    env, fs,
+    time::{Duration, Instant},
+};
 
 use shiki::{Highlighter, LanguageBundle};
 
@@ -9,7 +10,8 @@ static LANGUAGES: LanguageBundle = shiki_langs::languages![javascript];
 fn main() -> shiki::Result<()> {
     let path = env::args().nth(1).expect("usage: diagnose <path>");
     if path == "--synthetic" {
-        const STATEMENT: &str = "const value=items.map(item=>item.name).filter(Boolean).join(',');";
+        const STATEMENT: &str =
+            "const value=items.map(item=>item.name).filter(Boolean).join(',');";
         let compact = STATEMENT.repeat(800);
         let formatted = format!("{STATEMENT}\n").repeat(800);
         diagnose("synthetic-compact", &compact)?;
@@ -33,8 +35,12 @@ fn diagnose(label: &str, source: &str) -> shiki::Result<()> {
     let mut lines = Vec::new();
     for (index, line) in source.lines().enumerate() {
         let started = Instant::now();
-        let (tokens, next) =
-            highlighter.tokenize_line(line, "javascript", state.as_ref(), index == 0)?;
+        let (tokens, next) = highlighter.tokenize_line(
+            line,
+            "javascript",
+            state.as_ref(),
+            index == 0,
+        )?;
         let elapsed = started.elapsed();
         state = Some(next);
         total += elapsed;

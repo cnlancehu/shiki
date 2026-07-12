@@ -1,6 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
-use std::ops::Deref;
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Deref,
+    sync::Arc,
+};
 
 use serde::Deserialize;
 
@@ -50,7 +52,8 @@ impl<'de, 'a> Deserialize<'de> for RawString<'a> {
     where
         D: serde::Deserializer<'de>,
     {
-        String::deserialize(deserializer).map(|value| Self::Owned(Arc::from(value)))
+        String::deserialize(deserializer)
+            .map(|value| Self::Owned(Arc::from(value)))
     }
 }
 
@@ -193,8 +196,12 @@ impl<'b, T> Iterator for RawMapIter<'b, '_, T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Borrowed(values) => values.next().map(|entry| (entry.key, &entry.value)),
-            Self::Owned(values) => values.next().map(|(key, value)| (key.as_str(), value)),
+            Self::Borrowed(values) => {
+                values.next().map(|entry| (entry.key, &entry.value))
+            }
+            Self::Owned(values) => {
+                values.next().map(|(key, value)| (key.as_str(), value))
+            }
         }
     }
 }

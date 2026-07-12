@@ -1,17 +1,18 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) enum Priority {
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+)]
+pub enum Priority {
     Left,
     Normal,
     Right,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ScopeSelector {
+pub struct ScopeSelector {
     pub priority: Priority,
     expression: Expression,
 }
@@ -24,16 +25,20 @@ enum Expression {
     Not(Box<Expression>),
 }
 
-pub(crate) type SelectorId = u32;
+pub type SelectorId = u32;
 
 #[derive(Default)]
-pub(crate) struct SelectorSymbols {
+pub struct SelectorSymbols {
     ids: HashMap<Arc<str>, SelectorId>,
     pub values: Vec<Arc<str>>,
 }
 
 impl ScopeSelector {
-    pub fn matches(&self, scopes: &[u32], scope_matches: &[Box<[bool]>]) -> bool {
+    pub fn matches(
+        &self,
+        scopes: &[u32],
+        scope_matches: &[Box<[bool]>],
+    ) -> bool {
         self.expression.matches(scopes, scope_matches)
     }
 }
@@ -44,9 +49,10 @@ impl Expression {
             Self::Path(path) => {
                 let mut next_scope = 0;
                 path.iter().all(|selector| {
-                    let Some(relative) = scopes[next_scope..]
-                        .iter()
-                        .position(|scope| scope_matches[*scope as usize][*selector as usize])
+                    let Some(relative) =
+                        scopes[next_scope..].iter().position(|scope| {
+                            scope_matches[*scope as usize][*selector as usize]
+                        })
                     else {
                         return false;
                     };
@@ -65,7 +71,7 @@ impl Expression {
     }
 }
 
-pub(crate) fn parse_scope_selector(
+pub fn parse_scope_selector(
     source: &str,
     symbols: &mut SelectorSymbols,
 ) -> Vec<ScopeSelector> {
@@ -229,7 +235,9 @@ fn tokenize(source: &str) -> Vec<Token> {
             {
                 position += 1;
             }
-            tokens.push(Token::Identifier(chars[start..position].iter().collect()));
+            tokens.push(Token::Identifier(
+                chars[start..position].iter().collect(),
+            ));
             continue;
         }
         position += 1;
@@ -237,14 +245,16 @@ fn tokenize(source: &str) -> Vec<Token> {
     tokens
 }
 
-pub(crate) fn scope_matches(chunks: &[&str], selector: &str) -> bool {
+pub fn scope_matches(chunks: &[&str], selector: &str) -> bool {
     let mut selector_offset = 0;
     let mut next = None;
     for chunk in chunks {
         let bytes = chunk.as_bytes();
         let remaining = selector.len().saturating_sub(selector_offset);
         let compared = remaining.min(bytes.len());
-        if bytes[..compared] != selector.as_bytes()[selector_offset..selector_offset + compared] {
+        if bytes[..compared]
+            != selector.as_bytes()[selector_offset..selector_offset + compared]
+        {
             return false;
         }
         selector_offset += compared;

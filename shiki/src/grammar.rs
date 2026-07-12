@@ -1,11 +1,12 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, Result};
-use crate::matcher::{ScopeSelector, SelectorSymbols, parse_scope_selector};
-use crate::raw::{RawList, RawMap, RawString};
+use crate::{
+    error::{Error, Result},
+    matcher::{ScopeSelector, SelectorSymbols, parse_scope_selector},
+    raw::{RawList, RawMap, RawString},
+};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,29 +85,29 @@ impl<'a> RawRule<'a> {
     };
 }
 
-pub(crate) type RuleId = u32;
-pub(crate) type PatternSourceId = u32;
-pub(crate) type ScopeNameId = u32;
-pub(crate) type ScopeTemplateId = u32;
+pub type RuleId = u32;
+pub type PatternSourceId = u32;
+pub type ScopeNameId = u32;
+pub type ScopeTemplateId = u32;
 
 #[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct ScopeName {
+pub struct ScopeName {
     pub scopes: Box<[ScopeTemplateId]>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct ScopeTemplate {
+pub struct ScopeTemplate {
     pub parts: Box<[ScopePart]>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub(crate) enum ScopePart {
+pub enum ScopePart {
     Literal(Arc<str>),
     Capture(usize),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Capture {
+pub struct Capture {
     pub index: usize,
     pub name: Option<ScopeNameId>,
     pub content_name: Option<ScopeNameId>,
@@ -114,7 +115,7 @@ pub(crate) struct Capture {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum RuleKind {
+pub enum RuleKind {
     Match {
         pattern: PatternSourceId,
         captures: Vec<Capture>,
@@ -141,14 +142,14 @@ pub(crate) enum RuleKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Rule {
+pub struct Rule {
     pub name: Option<ScopeNameId>,
     pub content_name: Option<ScopeNameId>,
     pub kind: RuleKind,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct CompiledGrammar {
+pub struct CompiledGrammar {
     pub root_scope_name: ScopeNameId,
     pub root: RuleId,
     pub rules: Vec<Rule>,
@@ -160,14 +161,14 @@ pub(crate) struct CompiledGrammar {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Injection {
+pub struct Injection {
     pub selector: ScopeSelector,
     pub rule: RuleId,
 }
 
 type RepoChain<'a> = Vec<&'a RawMap<'static, RawRule<'static>>>;
 
-pub(crate) fn compile(
+pub fn compile(
     scope_name: &str,
     grammars: &HashMap<String, &RawGrammar<'static>>,
     external_injections: &HashMap<String, Vec<String>>,
@@ -196,7 +197,8 @@ pub(crate) fn compile(
         let id = compiler.compile_rule(raw, &repo, base, base)?;
         compiler.add_injection(selector, id);
     }
-    let mut external_injections = external_injections.iter().collect::<Vec<_>>();
+    let mut external_injections =
+        external_injections.iter().collect::<Vec<_>>();
     external_injections.sort_by_key(|(target_scope, _)| target_scope.as_str());
     for (target_scope, injection_scopes) in external_injections {
         for injection_scope in injection_scopes {
@@ -250,10 +252,15 @@ impl<'a> Compiler<'a> {
         );
     }
 
-    fn push_placeholder(&mut self, name: Option<&str>, content_name: Option<&str>) -> RuleId {
+    fn push_placeholder(
+        &mut self,
+        name: Option<&str>,
+        content_name: Option<&str>,
+    ) -> RuleId {
         let id = self.rules.len() as RuleId;
         let name = name.map(|name| self.intern_scope_name(name));
-        let content_name = content_name.map(|name| self.intern_scope_name(name));
+        let content_name =
+            content_name.map(|name| self.intern_scope_name(name));
         self.rules.push(Rule {
             name,
             content_name,
@@ -277,7 +284,8 @@ impl<'a> Compiler<'a> {
         let id = self.push_placeholder(Some(&grammar.scope_name), None);
         self.roots.insert(key, id);
         let repo = vec![&grammar.repository];
-        let patterns = self.compile_patterns(&grammar.patterns, &repo, grammar, base)?;
+        let patterns =
+            self.compile_patterns(&grammar.patterns, &repo, grammar, base)?;
         self.rules[id as usize].kind = RuleKind::IncludeOnly { patterns };
         Ok(id)
     }
@@ -314,7 +322,8 @@ impl<'a> Compiler<'a> {
         if let Some(id) = self.raw_cache.get(&key) {
             return Ok(*id);
         }
-        let id = self.push_placeholder(raw.name.as_deref(), raw.content_name.as_deref());
+        let id = self
+            .push_placeholder(raw.name.as_deref(), raw.content_name.as_deref());
         self.raw_cache.insert(key, id);
 
         let mut nested_repo = repo.clone();
@@ -323,10 +332,20 @@ impl<'a> Compiler<'a> {
         }
         let kind = if let Some(pattern) = &raw.match_pattern {
             let pattern = self.intern_pattern(normalize_pattern(pattern));
-            let captures = self.compile_captures(&raw.captures, &nested_repo, grammar, base)?;
+            let captures = self.compile_captures(
+                &raw.captures,
+                &nested_repo,
+                grammar,
+                base,
+            )?;
             RuleKind::Match { pattern, captures }
         } else if let Some(begin) = &raw.begin {
-            let patterns = self.compile_patterns(&raw.patterns, &nested_repo, grammar, base)?;
+            let patterns = self.compile_patterns(
+                &raw.patterns,
+                &nested_repo,
+                grammar,
+                base,
+            )?;
             let begin = self.intern_pattern(normalize_pattern(begin));
             if let Some(while_pattern) = &raw.while_pattern {
                 let begin_captures = self.compile_captures(
@@ -335,7 +354,8 @@ impl<'a> Compiler<'a> {
                     grammar,
                     base,
                 )?;
-                let while_pattern = self.intern_pattern(normalize_pattern(while_pattern));
+                let while_pattern =
+                    self.intern_pattern(normalize_pattern(while_pattern));
                 let while_captures = self.compile_captures(
                     captures_or(&raw.while_captures, &raw.captures),
                     &nested_repo,
@@ -356,7 +376,9 @@ impl<'a> Compiler<'a> {
                     grammar,
                     base,
                 )?;
-                let end = self.intern_pattern(normalize_pattern(raw.end.as_deref().unwrap_or("")));
+                let end = self.intern_pattern(normalize_pattern(
+                    raw.end.as_deref().unwrap_or(""),
+                ));
                 let end_captures = self.compile_captures(
                     captures_or(&raw.end_captures, &raw.captures),
                     &nested_repo,
@@ -373,7 +395,12 @@ impl<'a> Compiler<'a> {
                 }
             }
         } else {
-            let patterns = self.compile_patterns(&raw.patterns, &nested_repo, grammar, base)?;
+            let patterns = self.compile_patterns(
+                &raw.patterns,
+                &nested_repo,
+                grammar,
+                base,
+            )?;
             RuleKind::IncludeOnly { patterns }
         };
         self.rules[id as usize].kind = kind;
@@ -392,11 +419,12 @@ impl<'a> Compiler<'a> {
             let Ok(index) = key.parse::<usize>() else {
                 continue;
             };
-            let retokenize = if capture.patterns.is_empty() && capture.include.is_none() {
-                None
-            } else {
-                Some(self.compile_rule(capture, repo, grammar, base)?)
-            };
+            let retokenize =
+                if capture.patterns.is_empty() && capture.include.is_none() {
+                    None
+                } else {
+                    Some(self.compile_rule(capture, repo, grammar, base)?)
+                };
             output.push(Capture {
                 index,
                 name: capture
@@ -440,7 +468,12 @@ impl<'a> Compiler<'a> {
                 if let Some(name) = name {
                     if let Some(raw) = external.repository.get(name) {
                         let external_repo = vec![&external.repository];
-                        return self.compile_rule(raw, &external_repo, external, base);
+                        return self.compile_rule(
+                            raw,
+                            &external_repo,
+                            external,
+                            base,
+                        );
                     }
                 } else {
                     return self.compile_root(external, base);
@@ -498,7 +531,10 @@ fn parse_scope_template(scope: &str) -> Vec<ScopePart> {
     let mut start = 0;
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'$' && index + 1 < bytes.len() && bytes[index + 1].is_ascii_digit() {
+        if bytes[index] == b'$'
+            && index + 1 < bytes.len()
+            && bytes[index + 1].is_ascii_digit()
+        {
             if start < index {
                 parts.push(ScopePart::Literal(Arc::from(&scope[start..index])));
             }
@@ -557,7 +593,11 @@ where
             .map(|(index, value)| (index.to_string(), value))
             .collect(),
         serde_json::Value::Null => Vec::new(),
-        value => return Err(D::Error::custom(format!("invalid captures value: {value}"))),
+        value => {
+            return Err(D::Error::custom(format!(
+                "invalid captures value: {value}"
+            )));
+        }
     };
     let mut captures = HashMap::new();
     for (key, value) in values {
@@ -579,15 +619,21 @@ where
     Ok(RawMap::Owned(captures.into_iter().collect()))
 }
 
-fn deserialize_boolish<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+fn deserialize_boolish<'de, D>(
+    deserializer: D,
+) -> std::result::Result<bool, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let value = serde_json::Value::deserialize(deserializer)?;
     Ok(match value {
         serde_json::Value::Bool(value) => value,
-        serde_json::Value::Number(value) => value.as_i64().is_some_and(|value| value != 0),
-        serde_json::Value::String(value) => value == "1" || value.eq_ignore_ascii_case("true"),
+        serde_json::Value::Number(value) => {
+            value.as_i64().is_some_and(|value| value != 0)
+        }
+        serde_json::Value::String(value) => {
+            value == "1" || value.eq_ignore_ascii_case("true")
+        }
         _ => false,
     })
 }
@@ -600,25 +646,33 @@ where
 {
     use serde::de::Error as _;
 
-    let values = HashMap::<String, serde_json::Value>::deserialize(deserializer)?;
+    let values =
+        HashMap::<String, serde_json::Value>::deserialize(deserializer)?;
     let values = values
         .into_iter()
         .map(|(name, value)| {
-            let rule = match value {
-                serde_json::Value::Array(values) => RawRule {
-                    patterns: RawList::Owned(
-                        values
-                            .into_iter()
-                            .map(serde_json::from_value)
-                            .collect::<std::result::Result<Vec<RawRule<'static>>, _>>()
-                            .map_err(D::Error::custom)?,
-                    ),
-                    ..RawRule::default()
-                },
-                value => serde_json::from_value(value).map_err(D::Error::custom)?,
-            };
+            let rule =
+                match value {
+                    serde_json::Value::Array(values) => RawRule {
+                        patterns:
+                            RawList::Owned(
+                                values
+                                    .into_iter()
+                                    .map(serde_json::from_value)
+                                    .collect::<std::result::Result<
+                                        Vec<RawRule<'static>>,
+                                        _,
+                                    >>()
+                                    .map_err(D::Error::custom)?,
+                            ),
+                        ..RawRule::default()
+                    },
+                    value => serde_json::from_value(value)
+                        .map_err(D::Error::custom)?,
+                };
             Ok((name, rule))
         })
-        .collect::<std::result::Result<std::collections::BTreeMap<_, _>, _>>()?;
+        .collect::<std::result::Result<std::collections::BTreeMap<_, _>, _>>(
+        )?;
     Ok(RawMap::Owned(values))
 }

@@ -52,7 +52,8 @@ fn main() {
     std::hint::black_box(cached_tokens);
 
     let started = Instant::now();
-    let themed_tokens = highlighter.code_to_tokens(jquery, "javascript").unwrap();
+    let themed_tokens =
+        highlighter.code_to_tokens(jquery, "javascript").unwrap();
     let themed = started.elapsed();
     std::hint::black_box(themed_tokens);
     let cache = highlighter.cache_stats("javascript").unwrap().unwrap();

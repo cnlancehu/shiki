@@ -1,9 +1,13 @@
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, OnceLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, OnceLock},
+};
 
-use crate::error::{Error, Result};
-use crate::grammar::RawGrammar;
-use crate::theme::{RawTheme, Theme};
+use crate::{
+    error::{Error, Result},
+    grammar::RawGrammar,
+    theme::{RawTheme, Theme},
+};
 
 pub struct LanguageDefinition {
     pub id: &'static str,
@@ -89,7 +93,9 @@ impl LanguageBundle {
         Self { groups }
     }
 
-    pub fn definitions(self) -> impl Iterator<Item = &'static LanguageDefinition> {
+    pub fn definitions(
+        self,
+    ) -> impl Iterator<Item = &'static LanguageDefinition> {
         self.groups.iter().flat_map(|group| group.iter().copied())
     }
 
@@ -136,13 +142,12 @@ impl LanguageBundle {
             }
             for dependency in definition.dependencies {
                 let child =
-                    by_name
-                        .get(dependency)
-                        .copied()
-                        .ok_or_else(|| Error::MissingDependency {
+                    by_name.get(dependency).copied().ok_or_else(|| {
+                        Error::MissingDependency {
                             language: definition.id.to_owned(),
                             dependency: (*dependency).to_owned(),
-                        })?;
+                        }
+                    })?;
                 visit(child, by_name, seen, output)?;
             }
             output.push(definition);

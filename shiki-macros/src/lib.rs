@@ -15,9 +15,11 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Literal, Span};
 use quote::quote;
-use syn::parse::{Parse, ParseStream};
-use syn::punctuated::Punctuated;
-use syn::{Ident, LitStr, Result, Token, bracketed, parenthesized};
+use syn::{
+    Ident, LitStr, Result, Token, bracketed, parenthesized,
+    parse::{Parse, ParseStream},
+    punctuated::Punctuated,
+};
 
 struct ThemeSelection {
     name: LitStr,
@@ -39,19 +41,27 @@ impl Parse for HighlighterInput {
             match key.to_string().as_str() {
                 "languages" => {
                     if languages.is_some() {
-                        return Err(syn::Error::new(key.span(), "duplicate `languages` field"));
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "duplicate `languages` field",
+                        ));
                     }
                     let content;
                     bracketed!(content in input);
                     languages = Some(
-                        Punctuated::<LitStr, Token![,]>::parse_terminated(&content)?
-                            .into_iter()
-                            .collect(),
+                        Punctuated::<LitStr, Token![,]>::parse_terminated(
+                            &content,
+                        )?
+                        .into_iter()
+                        .collect(),
                     );
                 }
                 "themes" => {
                     if themes.is_some() {
-                        return Err(syn::Error::new(key.span(), "duplicate `themes` field"));
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "duplicate `themes` field",
+                        ));
                     }
                     let content;
                     bracketed!(content in input);
@@ -71,10 +81,14 @@ impl Parse for HighlighterInput {
             }
         }
         let languages = languages.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "missing `languages: [...]` field")
+            syn::Error::new(
+                Span::call_site(),
+                "missing `languages: [...]` field",
+            )
         })?;
-        let themes = themes
-            .ok_or_else(|| syn::Error::new(Span::call_site(), "missing `themes: [...]` field"))?;
+        let themes = themes.ok_or_else(|| {
+            syn::Error::new(Span::call_site(), "missing `themes: [...]` field")
+        })?;
         if languages.is_empty() {
             return Err(syn::Error::new(
                 Span::call_site(),
@@ -99,7 +113,9 @@ impl Parse for ThemeSelection {
         content.parse::<Token![,]>()?;
         let definition = content.parse()?;
         if !content.is_empty() {
-            return Err(content.error("expected `(output_name, bundled_theme_id)`"));
+            return Err(
+                content.error("expected `(output_name, bundled_theme_id)`")
+            );
         }
         Ok(Self { name, definition })
     }
@@ -145,9 +161,13 @@ fn compile(input: HighlighterInput) -> Result<Vec<u8>> {
         .map(LitStr::value)
         .collect::<Vec<_>>();
     for (id, literal) in language_ids.iter().zip(&input.languages) {
-        let available = shiki_langs::generated::ALL_LANGUAGES
-            .iter()
-            .any(|language| language.id == id || language.aliases.iter().any(|alias| alias == id));
+        let available =
+            shiki_langs::generated::ALL_LANGUAGES
+                .iter()
+                .any(|language| {
+                    language.id == id
+                        || language.aliases.iter().any(|alias| alias == id)
+                });
         if !available {
             return Err(syn::Error::new(
                 literal.span(),
@@ -175,8 +195,9 @@ fn compile(input: HighlighterInput) -> Result<Vec<u8>> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let groups: &'static [shiki::LanguageGroup] =
-        Box::leak(vec![shiki_langs::generated::ALL_LANGUAGES].into_boxed_slice());
+    let groups: &'static [shiki::LanguageGroup] = Box::leak(
+        vec![shiki_langs::generated::ALL_LANGUAGES].into_boxed_slice(),
+    );
     let bundle = shiki::LanguageBundle::from_groups(groups);
     let engine = shiki::Highlighter::builder()
         .bundle(&bundle)

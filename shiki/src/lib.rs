@@ -87,21 +87,26 @@ mod grammar;
 mod highlighter;
 mod matcher;
 mod raw;
+mod renderer;
 mod theme;
 mod tokenizer;
 
 pub use definition::{
-    LanguageBundle, LanguageDefinition, LanguageGroup, ThemeBundle, ThemeDefinition,
+    LanguageBundle, LanguageDefinition, LanguageGroup, ThemeBundle,
+    ThemeDefinition,
 };
 pub use error::{Error, Result};
 pub use grammar::{RawGrammar, RawRule};
 pub use highlighter::{
-    Highlighter, HighlighterBuilder, HighlighterEngine, HtmlOptions, HtmlRenderer, LanguageInput,
-    LanguageSession, Renderer, ResolvedStyle, ThemeInput,
+    Highlighter, HighlighterBuilder, HighlighterEngine, LanguageInput,
+    LanguageSession, ResolvedStyle, ThemeInput,
 };
 pub use raw::{RawList, RawMap, RawMapEntry, RawString};
-pub use theme::{FontStyle, RawTheme, RawThemeRule, RawThemeScope, RawThemeSettings, Theme};
+pub use renderer::{HtmlOptions, HtmlRenderer, Renderer};
+pub use theme::{
+    FontStyle, RawTheme, RawThemeRule, RawThemeScope, RawThemeSettings, Theme,
+};
 pub use tokenizer::{
-    GrammarState, MultiThemedToken, RegexLimits, ScopeStackId, ScopeToken, ThemeId,
-    ThemeTokenStyle, ThemedToken, TokenizerCacheStats,
+    GrammarState, MultiThemedToken, RegexLimits, ScopeStackId, ScopeToken,
+    ThemeId, ThemeTokenStyle, ThemedToken, TokenizerCacheStats,
 };

@@ -1,11 +1,15 @@
+use std::{collections::HashMap, sync::Arc};
+
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
 
-use crate::error::{Error, Result};
-use crate::raw::{RawList, RawMap, RawString};
+use crate::{
+    error::{Error, Result},
+    raw::{RawList, RawMap, RawString},
+};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize,
+)]
 pub struct FontStyle(pub u8);
 
 impl FontStyle {
@@ -28,7 +32,7 @@ impl FontStyle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub(crate) struct ColorId(u32);
+pub struct ColorId(u32);
 
 impl ColorId {
     const fn index(self) -> usize {
@@ -36,8 +40,10 @@ impl ColorId {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Style {
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct Style {
     pub foreground: Option<ColorId>,
     pub background: Option<ColorId>,
     pub font_style: Option<FontStyle>,
@@ -65,7 +71,7 @@ pub struct Theme {
     rules: Vec<ThemeRule>,
 }
 
-pub(crate) struct ThemeMatcher {
+pub struct ThemeMatcher {
     theme: Arc<Theme>,
     scope_matches: Vec<Box<[bool]>>,
     candidates: Vec<Box<[usize]>>,
@@ -106,17 +112,17 @@ impl Theme {
 
         for (order, entry) in settings.iter().enumerate() {
             let style = Style {
-                foreground: entry
+                foreground: entry.settings.foreground.as_deref().map(|color| {
+                    intern_color(&mut colors, &mut color_ids, color)
+                }),
+                background: entry.settings.background.as_deref().map(|color| {
+                    intern_color(&mut colors, &mut color_ids, color)
+                }),
+                font_style: entry
                     .settings
-                    .foreground
+                    .font_style
                     .as_deref()
-                    .map(|color| intern_color(&mut colors, &mut color_ids, color)),
-                background: entry
-                    .settings
-                    .background
-                    .as_deref()
-                    .map(|color| intern_color(&mut colors, &mut color_ids, color)),
-                font_style: entry.settings.font_style.as_deref().map(parse_font_style),
+                    .map(parse_font_style),
             };
             if entry.scope.is_empty() {
                 if let Some(value) = style.foreground {
@@ -128,20 +134,31 @@ impl Theme {
                 continue;
             }
             for selector in entry.scope.iter() {
-                for selector in selector.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                    let mut parts: Vec<_> = selector.split_whitespace().collect();
+                for selector in
+                    selector.split(',').map(str::trim).filter(|s| !s.is_empty())
+                {
+                    let mut parts: Vec<_> =
+                        selector.split_whitespace().collect();
                     let Some(target) = parts.pop() else {
                         continue;
                     };
                     parts.reverse();
                     let target_depth = target.split('.').count();
                     rules.push(ThemeRule {
-                        target: intern_selector(&mut selectors, &mut selector_ids, target),
+                        target: intern_selector(
+                            &mut selectors,
+                            &mut selector_ids,
+                            target,
+                        ),
                         parents: parts
                             .into_iter()
                             .filter(|parent| *parent != ">")
                             .map(|parent| {
-                                intern_selector(&mut selectors, &mut selector_ids, parent)
+                                intern_selector(
+                                    &mut selectors,
+                                    &mut selector_ids,
+                                    parent,
+                                )
                             })
                             .collect(),
                         target_depth,
@@ -151,8 +168,10 @@ impl Theme {
                 }
             }
         }
-        let foreground_id = intern_color(&mut colors, &mut color_ids, &foreground);
-        let background_id = intern_color(&mut colors, &mut color_ids, &background);
+        let foreground_id =
+            intern_color(&mut colors, &mut color_ids, &foreground);
+        let background_id =
+            intern_color(&mut colors, &mut color_ids, &background);
         Self {
             name: Arc::from(raw.name.as_deref().unwrap_or(name)),
             foreground: colors[foreground_id.index()].clone(),
@@ -164,7 +183,7 @@ impl Theme {
         }
     }
 
-    pub(crate) fn color(&self, color: ColorId) -> &str {
+    pub fn color(&self, color: ColorId) -> &str {
         &self.colors[color.index()]
     }
 
@@ -176,15 +195,15 @@ impl Theme {
         self.selectors.iter().map(AsRef::as_ref)
     }
 
-    pub(crate) fn color_arc(&self, color: ColorId) -> Arc<str> {
+    pub fn color_arc(&self, color: ColorId) -> Arc<str> {
         self.colors[color.index()].clone()
     }
 
-    pub(crate) const fn foreground_id(&self) -> ColorId {
+    pub const fn foreground_id(&self) -> ColorId {
         self.foreground_id
     }
 
-    pub(crate) fn matcher(self: &Arc<Self>) -> ThemeMatcher {
+    pub fn matcher(self: &Arc<Self>) -> ThemeMatcher {
         ThemeMatcher {
             theme: self.clone(),
             scope_matches: Vec::new(),
@@ -194,11 +213,11 @@ impl Theme {
 }
 
 impl ThemeMatcher {
-    pub(crate) fn scope_count(&self) -> usize {
+    pub fn scope_count(&self) -> usize {
         self.scope_matches.len()
     }
 
-    pub(crate) fn register_scope(&mut self, chunks: &[&str]) {
+    pub fn register_scope(&mut self, chunks: &[&str]) {
         let matches: Box<[_]> = self
             .theme
             .selectors
@@ -210,7 +229,9 @@ impl ThemeMatcher {
             .rules
             .iter()
             .enumerate()
-            .filter_map(|(index, rule)| matches[rule.target as usize].then_some(index))
+            .filter_map(|(index, rule)| {
+                matches[rule.target as usize].then_some(index)
+            })
             .collect();
         candidates.sort_by_key(|index| {
             let rule = &self.theme.rules[*index];
@@ -220,7 +241,7 @@ impl ThemeMatcher {
         self.candidates.push(candidates.into_boxed_slice());
     }
 
-    pub(crate) fn resolve_scope(&self, path: &[u32], mut result: Style) -> Style {
+    pub fn resolve_scope(&self, path: &[u32], mut result: Style) -> Style {
         let Some((&scope, parents)) = path.split_last() else {
             return result;
         };
@@ -228,10 +249,9 @@ impl ThemeMatcher {
             let rule = &self.theme.rules[rule_index];
             let mut cursor = parents.len();
             let parents_match = rule.parents.iter().all(|selector| {
-                let Some(index) = parents[..cursor]
-                    .iter()
-                    .rposition(|scope| self.scope_matches[*scope as usize][*selector as usize])
-                else {
+                let Some(index) = parents[..cursor].iter().rposition(|scope| {
+                    self.scope_matches[*scope as usize][*selector as usize]
+                }) else {
                     return false;
                 };
                 cursor = index;
@@ -402,7 +422,10 @@ fn deserialize_string_map<'de, D>(
 where
     D: serde::Deserializer<'de>,
 {
-    let values = std::collections::HashMap::<String, serde_json::Value>::deserialize(deserializer)?;
+    let values =
+        std::collections::HashMap::<String, serde_json::Value>::deserialize(
+            deserializer,
+        )?;
     Ok(RawMap::Owned(
         values
             .into_iter()

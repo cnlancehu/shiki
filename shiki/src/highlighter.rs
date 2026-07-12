@@ -1,36 +1,42 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fmt::Write;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use serde::{Deserialize, Serialize};
 
-use crate::definition::{LanguageBundle, ThemeDefinition};
-use crate::error::{Error, Result};
-use crate::grammar::{RawGrammar, compile};
-use crate::theme::{FontStyle, RawTheme, Style, Theme};
-use crate::tokenizer::{
-    GrammarState, MultiThemedToken, RegexLimits, ScopeToken, ThemeId, ThemeTokenStyle, ThemedToken,
-    Tokenizer, TokenizerCacheStats,
+use crate::{
+    definition::{LanguageBundle, ThemeDefinition},
+    error::{Error, Result},
+    grammar::{RawGrammar, compile},
+    renderer::{HtmlOptions, HtmlRenderer, Renderer},
+    theme::{FontStyle, RawTheme, Theme},
+    tokenizer::{
+        GrammarState, MultiThemedToken, RegexLimits, ScopeToken, ThemeId,
+        ThemeTokenStyle, ThemedToken, Tokenizer, TokenizerCacheStats,
+    },
 };
 
 #[derive(Clone)]
-struct NamedTheme {
-    name: String,
-    css_name: String,
-    theme: Arc<Theme>,
+pub struct NamedTheme {
+    pub name: String,
+    pub css_name: String,
+    pub theme: Arc<Theme>,
 }
 
-struct CompiledLanguage {
-    grammar: Arc<crate::grammar::CompiledGrammar>,
-    grammar_id: u64,
+pub struct CompiledLanguage {
+    pub grammar: Arc<crate::grammar::CompiledGrammar>,
+    pub grammar_id: u64,
 }
 
-struct EngineInner {
-    languages: HashMap<String, usize>,
-    compiled: Vec<CompiledLanguage>,
-    themes: Vec<NamedTheme>,
-    regex_limits: RegexLimits,
+pub struct EngineInner {
+    pub languages: HashMap<String, usize>,
+    pub compiled: Vec<CompiledLanguage>,
+    pub themes: Vec<NamedTheme>,
+    pub regex_limits: RegexLimits,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -53,32 +59,11 @@ const PRECOMPILED_VERSION: u32 = 1;
 
 #[derive(Clone)]
 pub struct HighlighterEngine {
-    inner: Arc<EngineInner>,
+    pub inner: Arc<EngineInner>,
 }
 
 pub struct LanguageSession {
-    tokenizer: Tokenizer,
-}
-
-/// Renders highlighted source code into a concrete output format.
-///
-/// Renderers may use the high-level token APIs on [`Highlighter`]. Renderers
-/// implemented by this crate can additionally use its streaming internals to
-/// avoid materializing owned tokens.
-pub trait Renderer {
-    type Output;
-
-    fn render(
-        &mut self,
-        highlighter: &mut Highlighter,
-        code: &str,
-        language: &str,
-    ) -> Result<Self::Output>;
-}
-
-/// Streaming HTML renderer used by [`Highlighter::code_to_html`].
-pub struct HtmlRenderer<'a> {
-    pub options: &'a HtmlOptions,
+    pub tokenizer: Tokenizer,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -88,21 +73,11 @@ pub struct ResolvedStyle<'a> {
     pub font_style: FontStyle,
 }
 
-impl<'a> HtmlRenderer<'a> {
-    pub const fn new(options: &'a HtmlOptions) -> Self {
-        Self { options }
-    }
-
-    pub const fn options(&self) -> &HtmlOptions {
-        self.options
-    }
-}
-
 static NEXT_GRAMMAR_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct Highlighter {
-    engine: HighlighterEngine,
-    tokenizers: Vec<Option<Tokenizer>>,
+    pub engine: HighlighterEngine,
+    pub tokenizers: Vec<Option<Tokenizer>>,
 }
 
 pub struct HighlighterBuilder {
@@ -161,79 +136,6 @@ impl From<&'static ThemeDefinition> for ThemeInput {
 impl From<RawTheme<'static>> for ThemeInput {
     fn from(value: RawTheme<'static>) -> Self {
         Self::Raw(value)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct HtmlOptions {
-    pub pre_classes: Vec<String>,
-    pub code_classes: Vec<String>,
-    pub line_class: Option<String>,
-    pub pre_attributes: BTreeMap<String, String>,
-    pub code_attributes: BTreeMap<String, String>,
-    pub default_theme: Option<String>,
-    pub include_background: bool,
-    pub include_foreground: bool,
-    pub include_theme_class: bool,
-    pub include_default_theme_styles: bool,
-}
-
-impl Default for HtmlOptions {
-    fn default() -> Self {
-        Self {
-            pre_classes: vec!["shiki".to_owned()],
-            code_classes: Vec::new(),
-            line_class: Some("line".to_owned()),
-            pre_attributes: BTreeMap::new(),
-            code_attributes: BTreeMap::new(),
-            default_theme: None,
-            include_background: true,
-            include_foreground: true,
-            include_theme_class: true,
-            include_default_theme_styles: true,
-        }
-    }
-}
-
-impl HtmlOptions {
-    pub fn pre_class(mut self, class: impl Into<String>) -> Self {
-        self.pre_classes.push(class.into());
-        self
-    }
-
-    pub fn code_class(mut self, class: impl Into<String>) -> Self {
-        self.code_classes.push(class.into());
-        self
-    }
-
-    pub fn line_class(mut self, class: impl Into<String>) -> Self {
-        self.line_class = Some(class.into());
-        self
-    }
-
-    pub fn without_line_wrapper(mut self) -> Self {
-        self.line_class = None;
-        self
-    }
-
-    pub fn pre_attribute(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        self.pre_attributes.insert(name.into(), value.into());
-        self
-    }
-
-    pub fn code_attribute(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        self.code_attributes.insert(name.into(), value.into());
-        self
-    }
-
-    pub fn default_theme(mut self, name: impl Into<String>) -> Self {
-        self.default_theme = Some(name.into());
-        self
-    }
-
-    pub fn variables_only(mut self) -> Self {
-        self.include_default_theme_styles = false;
-        self
     }
 }
 
@@ -324,7 +226,10 @@ impl Highlighter {
             .count()
     }
 
-    pub fn cache_stats(&self, language: &str) -> Result<Option<TokenizerCacheStats>> {
+    pub fn cache_stats(
+        &self,
+        language: &str,
+    ) -> Result<Option<TokenizerCacheStats>> {
         let index = self.language_index(language)?;
         Ok(self.tokenizers[index].as_ref().map(Tokenizer::cache_stats))
     }
@@ -369,14 +274,22 @@ impl Highlighter {
         let mut state = None;
         let mut output = Vec::new();
         for (index, line) in split_lines(code).enumerate() {
-            let (tokens, next) = tokenizer.tokenize_line_owned(line, state.take(), index == 0)?;
+            let (tokens, next) = tokenizer.tokenize_line_owned(
+                line,
+                state.take(),
+                index == 0,
+            )?;
             output.push(tokens);
             state = Some(next);
         }
         Ok(output)
     }
 
-    pub fn code_to_tokens(&mut self, code: &str, language: &str) -> Result<Vec<Vec<ThemedToken>>> {
+    pub fn code_to_tokens(
+        &mut self,
+        code: &str,
+        language: &str,
+    ) -> Result<Vec<Vec<ThemedToken>>> {
         let tokens = self.code_to_scope_tokens(code, language)?;
         let language = self.language_index(language)?;
         let theme = &self.engine.inner.themes[0].theme;
@@ -390,9 +303,14 @@ impl Highlighter {
                 let style = tokenizer.styles(token.scopes)[0];
                 output_line.push(ThemedToken {
                     content: line[token.range].to_owned(),
-                    color: theme
-                        .color_arc(style.foreground.unwrap_or_else(|| theme.foreground_id())),
-                    background: style.background.map(|color| theme.color_arc(color)),
+                    color: theme.color_arc(
+                        style
+                            .foreground
+                            .unwrap_or_else(|| theme.foreground_id()),
+                    ),
+                    background: style
+                        .background
+                        .map(|color| theme.color_arc(color)),
                     font_style: style.font_style.unwrap_or_default(),
                     scopes: token.scopes,
                 });
@@ -428,7 +346,9 @@ impl Highlighter {
                                 .foreground
                                 .unwrap_or_else(|| theme.theme.foreground_id()),
                         ),
-                        background: style.background.map(|color| theme.theme.color_arc(color)),
+                        background: style
+                            .background
+                            .map(|color| theme.theme.color_arc(color)),
                         font_style: style.font_style.unwrap_or_default(),
                     })
                     .collect();
@@ -443,7 +363,11 @@ impl Highlighter {
         Ok(output)
     }
 
-    pub fn code_to_html(&mut self, code: &str, language: &str) -> Result<String> {
+    pub fn code_to_html(
+        &mut self,
+        code: &str,
+        language: &str,
+    ) -> Result<String> {
         let options = HtmlOptions::default();
         self.code_to_html_with_options(code, language, &options)
     }
@@ -467,131 +391,7 @@ impl Highlighter {
         renderer.render(self, code, language)
     }
 
-    fn render_html(&mut self, code: &str, language: &str, options: &HtmlOptions) -> Result<String> {
-        let language = self.language_index(language)?;
-        self.ensure_tokenizer(language);
-        let default_index = options
-            .default_theme
-            .as_deref()
-            .and_then(|name| {
-                self.engine
-                    .inner
-                    .themes
-                    .iter()
-                    .position(|theme| theme.name == name)
-            })
-            .unwrap_or(0);
-        let default = &self.engine.inner.themes[default_index];
-        let multiple = self.engine.inner.themes.len() > 1;
-
-        let mut pre_classes = options.pre_classes.clone();
-        if options.include_theme_class && !multiple {
-            pre_classes.push(default.theme.name.to_string());
-        }
-        let mut pre_attributes = options.pre_attributes.clone();
-        if multiple {
-            pre_attributes.insert(
-                "data-themes".to_owned(),
-                self.engine
-                    .inner
-                    .themes
-                    .iter()
-                    .map(|theme| theme.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            );
-        }
-
-        let mut root_style = String::new();
-        if multiple {
-            for theme in &self.engine.inner.themes {
-                write!(
-                    root_style,
-                    "--{}:{};--{}-bg:{};",
-                    theme.css_name, theme.theme.foreground, theme.css_name, theme.theme.background
-                )
-                .expect("write to String");
-            }
-            if options.include_background {
-                write!(
-                    root_style,
-                    "background-color:var(--{}-bg);",
-                    default.css_name
-                )
-                .expect("write to String");
-            }
-            if options.include_foreground {
-                write!(root_style, "color:var(--{});", default.css_name).expect("write to String");
-            }
-        } else {
-            if options.include_background {
-                write!(root_style, "background-color:{};", default.theme.background)
-                    .expect("write to String");
-            }
-            if options.include_foreground {
-                write!(root_style, "color:{};", default.theme.foreground).expect("write to String");
-            }
-        }
-
-        let mut output = String::with_capacity(code.len().saturating_mul(12));
-        open_tag(
-            &mut output,
-            "pre",
-            &pre_classes,
-            &pre_attributes,
-            Some(&root_style),
-        );
-        open_tag(
-            &mut output,
-            "code",
-            &options.code_classes,
-            &options.code_attributes,
-            None,
-        );
-        let themes = &self.engine.inner.themes;
-        let tokenizer = self.tokenizers[language]
-            .as_mut()
-            .expect("initialized tokenizer");
-        let mut state = None;
-        for (line_index, source) in split_lines(code).enumerate() {
-            let (line, next) =
-                tokenizer.tokenize_line_owned(source, state.take(), line_index == 0)?;
-            state = Some(next);
-            if line_index > 0 {
-                output.push('\n');
-            }
-            if let Some(line_class) = &options.line_class {
-                open_tag(
-                    &mut output,
-                    "span",
-                    std::slice::from_ref(line_class),
-                    &BTreeMap::new(),
-                    None,
-                );
-            }
-            for token in &line {
-                output.push_str("<span style=\"");
-                write_token_style(
-                    &mut output,
-                    tokenizer.styles(token.scopes),
-                    themes,
-                    default_index,
-                    multiple,
-                    options.include_default_theme_styles,
-                );
-                output.push_str("\">");
-                push_escaped_html(&mut output, &source[token.range.clone()]);
-                output.push_str("</span>");
-            }
-            if options.line_class.is_some() {
-                output.push_str("</span>");
-            }
-        }
-        output.push_str("</code></pre>");
-        Ok(output)
-    }
-
-    fn language_index(&self, language: &str) -> Result<usize> {
+    pub fn language_index(&self, language: &str) -> Result<usize> {
         self.engine
             .inner
             .languages
@@ -600,7 +400,7 @@ impl Highlighter {
             .ok_or_else(|| Error::GrammarNotLoaded(language.to_owned()))
     }
 
-    fn tokenizer(&mut self, language: &str) -> Result<&mut Tokenizer> {
+    pub fn tokenizer(&mut self, language: &str) -> Result<&mut Tokenizer> {
         let index = self.language_index(language)?;
         self.ensure_tokenizer(index);
         Ok(self.tokenizers[index]
@@ -608,7 +408,7 @@ impl Highlighter {
             .expect("initialized tokenizer"))
     }
 
-    fn ensure_tokenizer(&mut self, index: usize) {
+    pub fn ensure_tokenizer(&mut self, index: usize) {
         if self.tokenizers[index].is_some() {
             return;
         }
@@ -626,19 +426,6 @@ impl Highlighter {
             themes,
             self.engine.inner.regex_limits,
         ));
-    }
-}
-
-impl Renderer for HtmlRenderer<'_> {
-    type Output = String;
-
-    fn render(
-        &mut self,
-        highlighter: &mut Highlighter,
-        code: &str,
-        language: &str,
-    ) -> Result<Self::Output> {
-        highlighter.render_html(code, language, self.options)
     }
 }
 
@@ -775,7 +562,10 @@ impl LanguageSession {
         self.tokenizer.cache_stats()
     }
 
-    pub fn scope_names(&self, stack: crate::tokenizer::ScopeStackId) -> Result<Vec<String>> {
+    pub fn scope_names(
+        &self,
+        stack: crate::tokenizer::ScopeStackId,
+    ) -> Result<Vec<String>> {
         self.tokenizer.scope_names(stack)
     }
 
@@ -786,9 +576,11 @@ impl LanguageSession {
         is_first_line: bool,
     ) -> Result<Vec<ScopeToken>> {
         let previous = std::mem::take(state);
-        let (tokens, next) =
-            self.tokenizer
-                .tokenize_line_owned(line, Some(previous), is_first_line)?;
+        let (tokens, next) = self.tokenizer.tokenize_line_owned(
+            line,
+            Some(previous),
+            is_first_line,
+        )?;
         *state = next;
         Ok(tokens)
     }
@@ -832,7 +624,11 @@ impl HighlighterBuilder {
         self
     }
 
-    pub fn language(mut self, id: impl Into<String>, grammar: RawGrammar<'static>) -> Self {
+    pub fn language(
+        mut self,
+        id: impl Into<String>,
+        grammar: RawGrammar<'static>,
+    ) -> Self {
         self.runtime_languages.push(LanguageInput::new(id, grammar));
         self
     }
@@ -842,13 +638,21 @@ impl HighlighterBuilder {
         self
     }
 
-    pub fn json_language(self, id: impl Into<String>, source: &str) -> Result<Self> {
+    pub fn json_language(
+        self,
+        id: impl Into<String>,
+        source: &str,
+    ) -> Result<Self> {
         let id = id.into();
         let grammar = RawGrammar::from_json(&id, source)?;
         Ok(self.language(id, grammar))
     }
 
-    pub fn json_theme(mut self, name: impl Into<String>, source: &str) -> Result<Self> {
+    pub fn json_theme(
+        mut self,
+        name: impl Into<String>,
+        source: &str,
+    ) -> Result<Self> {
         let name = name.into();
         let theme = RawTheme::from_json(&name, source)?;
         self.themes.push((name, ThemeInput::Raw(theme)));
@@ -862,7 +666,9 @@ impl HighlighterBuilder {
     pub fn build_engine(self) -> Result<HighlighterEngine> {
         let (definitions, root_definitions) = match self.bundle {
             Some(bundle) => bundle.resolve(&self.languages)?,
-            None if self.runtime_languages.is_empty() => return Err(Error::NoLanguage),
+            None if self.runtime_languages.is_empty() => {
+                return Err(Error::NoLanguage);
+            }
             None => (Vec::new(), Vec::new()),
         };
         if self.themes.is_empty() {
@@ -907,17 +713,20 @@ impl HighlighterBuilder {
                 )
             })
             .collect::<Vec<_>>();
-        let runtime_languages = self.runtime_languages.into_iter().map(|language| {
-            let scope_name = language.grammar.scope_name.as_ref().to_owned();
-            (
-                language.id,
-                scope_name,
-                language.aliases,
-                language.inject_to,
-                language.grammar,
-            )
-        });
-        let mut grammars: HashMap<String, &RawGrammar<'static>> = HashMap::new();
+        let runtime_languages =
+            self.runtime_languages.into_iter().map(|language| {
+                let scope_name =
+                    language.grammar.scope_name.as_ref().to_owned();
+                (
+                    language.id,
+                    scope_name,
+                    language.aliases,
+                    language.inject_to,
+                    language.grammar,
+                )
+            });
+        let mut grammars: HashMap<String, &RawGrammar<'static>> =
+            HashMap::new();
         let mut injections: HashMap<String, Vec<String>> = HashMap::new();
         for (_, scope_name, _, inject_to, grammar) in &static_languages {
             grammars.insert(scope_name.clone(), grammar);
@@ -943,20 +752,23 @@ impl HighlighterBuilder {
             .iter()
             .map(|definition| definition.id)
             .collect::<HashSet<_>>();
-        let mut compiled = Vec::with_capacity(root_definitions.len() + runtime_languages.len());
+        let mut compiled = Vec::with_capacity(
+            root_definitions.len() + runtime_languages.len(),
+        );
         for (id, scope_name, aliases, _, _) in static_languages
             .iter()
             .filter(|(id, ..)| root_ids.contains(id.as_str()))
-            .map(|(id, scope, aliases, inject, grammar)| (id, scope, aliases, inject, *grammar))
-            .chain(
-                runtime_languages
-                    .iter()
-                    .map(|(id, scope, aliases, inject, grammar)| {
-                        (id, scope, aliases, inject, grammar)
-                    }),
-            )
+            .map(|(id, scope, aliases, inject, grammar)| {
+                (id, scope, aliases, inject, *grammar)
+            })
+            .chain(runtime_languages.iter().map(
+                |(id, scope, aliases, inject, grammar)| {
+                    (id, scope, aliases, inject, grammar)
+                },
+            ))
         {
-            let grammar = Arc::new(compile(scope_name, &grammars, &injections)?);
+            let grammar =
+                Arc::new(compile(scope_name, &grammars, &injections)?);
             let index = compiled.len();
             compiled.push(CompiledLanguage {
                 grammar,
@@ -979,154 +791,7 @@ impl HighlighterBuilder {
     }
 }
 
-fn write_token_style(
-    output: &mut String,
-    styles: &[Style],
-    themes: &[NamedTheme],
-    default_index: usize,
-    multiple: bool,
-    include_default_theme_styles: bool,
-) {
-    if !multiple {
-        let style = styles[0];
-        let color = themes[0].theme.color(
-            style
-                .foreground
-                .unwrap_or_else(|| themes[0].theme.foreground_id()),
-        );
-        output.push_str("color:");
-        push_escaped_attr(output, color);
-        output.push(';');
-        if let Some(background) = style.background {
-            output.push_str("background-color:");
-            push_escaped_attr(output, themes[0].theme.color(background));
-            output.push(';');
-        }
-        write_font_style(output, style.font_style.unwrap_or_default(), "");
-        return;
-    }
-
-    let mut has_background = false;
-    for (theme, style) in themes.iter().zip(styles) {
-        let color = theme.theme.color(
-            style
-                .foreground
-                .unwrap_or_else(|| theme.theme.foreground_id()),
-        );
-        write!(output, "--{}:", theme.css_name).expect("write to String");
-        push_escaped_attr(output, color);
-        output.push(';');
-        if let Some(background) = style.background {
-            has_background = true;
-            write!(output, "--{}-bg:", theme.css_name).expect("write to String");
-            push_escaped_attr(output, theme.theme.color(background));
-            output.push(';');
-        }
-        write_font_variables(
-            output,
-            &theme.css_name,
-            style.font_style.unwrap_or_default(),
-        );
-    }
-    let default = &themes[default_index].css_name;
-    if include_default_theme_styles {
-        write!(
-            output,
-            "color:var(--{default});font-style:var(--{default}-font-style);font-weight:var(--{default}-font-weight);text-decoration:var(--{default}-text-decoration);"
-        )
-        .expect("write to String");
-        if has_background {
-            write!(output, "background-color:var(--{default}-bg,transparent);")
-                .expect("write to String");
-        }
-    }
-}
-
-fn write_font_variables(output: &mut String, name: &str, style: FontStyle) {
-    let font_style = if style.contains(FontStyle::ITALIC) {
-        "italic"
-    } else {
-        "normal"
-    };
-    let font_weight = if style.contains(FontStyle::BOLD) {
-        "bold"
-    } else {
-        "normal"
-    };
-    let decoration = decoration(style);
-    write!(
-        output,
-        "--{name}-font-style:{font_style};--{name}-font-weight:{font_weight};--{name}-text-decoration:{decoration};"
-    )
-    .expect("write to String");
-}
-
-fn write_font_style(output: &mut String, style: FontStyle, prefix: &str) {
-    if style.contains(FontStyle::ITALIC) {
-        write!(output, "{prefix}font-style:italic;").expect("write to String");
-    }
-    if style.contains(FontStyle::BOLD) {
-        write!(output, "{prefix}font-weight:bold;").expect("write to String");
-    }
-    let decoration = decoration(style);
-    if decoration != "none" {
-        write!(output, "{prefix}text-decoration:{decoration};").expect("write to String");
-    }
-}
-
-fn decoration(style: FontStyle) -> &'static str {
-    match (
-        style.contains(FontStyle::UNDERLINE),
-        style.contains(FontStyle::STRIKETHROUGH),
-    ) {
-        (true, true) => "underline line-through",
-        (true, false) => "underline",
-        (false, true) => "line-through",
-        (false, false) => "none",
-    }
-}
-
-fn open_tag(
-    output: &mut String,
-    tag: &str,
-    classes: &[String],
-    attributes: &BTreeMap<String, String>,
-    style: Option<&str>,
-) {
-    write!(output, "<{tag}").expect("write to String");
-    if !classes.is_empty() {
-        output.push_str(" class=\"");
-        for (index, class) in classes.iter().enumerate() {
-            if index > 0 {
-                output.push(' ');
-            }
-            push_escaped_attr(output, class);
-        }
-        output.push('"');
-    }
-    for (name, value) in attributes {
-        if valid_attribute_name(name) {
-            write!(output, " {name}=\"").expect("write to String");
-            push_escaped_attr(output, value);
-            output.push('"');
-        }
-    }
-    if let Some(style) = style.filter(|style| !style.is_empty()) {
-        output.push_str(" style=\"");
-        push_escaped_attr(output, style);
-        output.push('"');
-    }
-    output.push('>');
-}
-
-fn valid_attribute_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
-}
-
-fn css_name(name: &str) -> String {
+pub fn css_name(name: &str) -> String {
     let output: String = name
         .chars()
         .map(|ch| {
@@ -1144,42 +809,9 @@ fn css_name(name: &str) -> String {
     }
 }
 
-fn split_lines(code: &str) -> impl Iterator<Item = &str> {
+pub fn split_lines(code: &str) -> impl Iterator<Item = &str> {
     let without_trailing_newline = code.strip_suffix('\n').unwrap_or(code);
     without_trailing_newline
         .split('\n')
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
-}
-
-fn push_escaped_html(output: &mut String, value: &str) {
-    let mut last = 0;
-    for (index, ch) in value.char_indices() {
-        let replacement = match ch {
-            '&' => "&amp;",
-            '<' => "&lt;",
-            '>' => "&gt;",
-            _ => continue,
-        };
-        output.push_str(&value[last..index]);
-        output.push_str(replacement);
-        last = index + ch.len_utf8();
-    }
-    output.push_str(&value[last..]);
-}
-
-fn push_escaped_attr(output: &mut String, value: &str) {
-    let mut last = 0;
-    for (index, ch) in value.char_indices() {
-        let replacement = match ch {
-            '&' => "&amp;",
-            '<' => "&lt;",
-            '>' => "&gt;",
-            '"' => "&quot;",
-            _ => continue,
-        };
-        output.push_str(&value[last..index]);
-        output.push_str(replacement);
-        last = index + ch.len_utf8();
-    }
-    output.push_str(&value[last..]);
 }

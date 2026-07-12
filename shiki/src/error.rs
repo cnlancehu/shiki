@@ -2,7 +2,9 @@
 pub enum Error {
     #[error("language `{0}` is not present in this bundle")]
     LanguageNotBundled(String),
-    #[error("language dependency `{dependency}` required by `{language}` is not bundled")]
+    #[error(
+        "language dependency `{dependency}` required by `{language}` is not bundled"
+    )]
     MissingDependency {
         language: String,
         dependency: String,

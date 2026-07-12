@@ -1,4 +1,4 @@
-use shiki::{Highlighter, HtmlOptions, LanguageBundle};
+use shiki::{Highlighter, HtmlOptions, LanguageBundle, Renderer};
 
 static LANGUAGES: LanguageBundle = shiki_langs::languages![astro, rust, vue];
 
@@ -34,7 +34,12 @@ fn keeps_multiline_state() {
         .tokenize_line("/* comment", "rust", None, true)
         .unwrap();
     let (second, _) = highlighter
-        .tokenize_line("continued */ let value = 1;", "rust", Some(&state), false)
+        .tokenize_line(
+            "continued */ let value = 1;",
+            "rust",
+            Some(&state),
+            false,
+        )
         .unwrap();
 
     assert!(!first.is_empty(), "{first:#?}");
@@ -199,7 +204,7 @@ fn renders_multiple_themes_as_css_variables() {
 fn renderer_trait_supports_custom_outputs() {
     struct ScopeCount;
 
-    impl shiki::Renderer for ScopeCount {
+    impl Renderer for ScopeCount {
         type Output = usize;
 
         fn render(

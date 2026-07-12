@@ -1,19 +1,23 @@
-use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
-use std::ffi::CStr;
-use std::ops::Range;
-use std::ptr;
-use std::sync::{Arc, OnceLock};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    ffi::CStr,
+    ops::Range,
+    ptr,
+    sync::{Arc, OnceLock},
+};
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, Result};
-use crate::grammar::{
-    Capture, CompiledGrammar, RuleId, RuleKind, ScopeName, ScopeNameId, ScopePart, ScopeTemplate,
-    ScopeTemplateId,
+use crate::{
+    error::{Error, Result},
+    grammar::{
+        Capture, CompiledGrammar, RuleId, RuleKind, ScopeName, ScopeNameId,
+        ScopePart, ScopeTemplate, ScopeTemplateId,
+    },
+    matcher::{Priority, scope_matches as selector_matches},
+    theme::{FontStyle, Style, Theme, ThemeMatcher},
 };
-use crate::matcher::{Priority, scope_matches as selector_matches};
-use crate::theme::{FontStyle, Style, Theme, ThemeMatcher};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeToken {
@@ -235,7 +239,8 @@ fn create_match_params(
                 unsafe { onig_sys::onig_free_match_param(param) };
             }
             return Err(Error::RegexSearch {
-                message: "failed to allocate Oniguruma match parameters".to_owned(),
+                message: "failed to allocate Oniguruma match parameters"
+                    .to_owned(),
             });
         }
         unsafe {
@@ -265,7 +270,9 @@ fn free_scanner_set(set: *mut onig_sys::OnigRegSet) {
     }
 }
 
-fn create_scanner_set(regexes: &[onig_sys::OnigRegex]) -> Result<*mut onig_sys::OnigRegSet> {
+fn create_scanner_set(
+    regexes: &[onig_sys::OnigRegex],
+) -> Result<*mut onig_sys::OnigRegSet> {
     if regexes.is_empty() {
         return Ok(ptr::null_mut());
     }
@@ -306,7 +313,7 @@ struct Retokenize {
     scopes: ScopeStackId,
 }
 
-pub(crate) struct Tokenizer {
+pub struct Tokenizer {
     grammar: Arc<CompiledGrammar>,
     grammar_id: u64,
     regex_limits: RegexLimits,
@@ -395,7 +402,9 @@ impl Tokenizer {
         let capture_bytes = self
             .capture_buffers
             .iter()
-            .map(|buffer| buffer.capacity() * std::mem::size_of::<Option<Range<usize>>>())
+            .map(|buffer| {
+                buffer.capacity() * std::mem::size_of::<Option<Range<usize>>>()
+            })
             .sum::<usize>();
         TokenizerCacheStats {
             scanners: self.scanners.len(),
@@ -419,7 +428,7 @@ impl Tokenizer {
         self.tokenize_line_owned(line, previous.cloned(), is_first_line)
     }
 
-    pub(crate) fn tokenize_line_owned(
+    pub fn tokenize_line_owned(
         &mut self,
         line: &str,
         previous: Option<GrammarState>,
@@ -490,7 +499,12 @@ impl Tokenizer {
                     .map(|frame| frame.rule)
                     .collect::<Vec<_>>();
                 if !zero_width_states.insert((position, stack, action)) {
-                    emit(&mut tokens, position, line.len(), frame.content_scopes);
+                    emit(
+                        &mut tokens,
+                        position,
+                        line.len(),
+                        frame.content_scopes,
+                    );
                     break;
                 }
             } else {
@@ -500,7 +514,8 @@ impl Tokenizer {
             match action {
                 Action::End => {
                     let rule = &self.grammar.rules[frame.rule as usize];
-                    let RuleKind::BeginEnd { end_captures, .. } = &rule.kind else {
+                    let RuleKind::BeginEnd { end_captures, .. } = &rule.kind
+                    else {
                         unreachable!()
                     };
                     let tasks = emit_captures(
@@ -537,7 +552,11 @@ impl Tokenizer {
                                 line.len(),
                                 &text,
                             );
-                            self.apply_retokenizations(&mut tokens, tasks, &text)?;
+                            self.apply_retokenizations(
+                                &mut tokens,
+                                tasks,
+                                &text,
+                            )?;
                         }
                         RuleKind::BeginEnd {
                             begin_captures,
@@ -568,7 +587,11 @@ impl Tokenizer {
                                 line.len(),
                                 &text,
                             );
-                            self.apply_retokenizations(&mut tokens, tasks, &text)?;
+                            self.apply_retokenizations(
+                                &mut tokens,
+                                tasks,
+                                &text,
+                            )?;
                             let scopes = extend_scopes(
                                 &mut self.scopes,
                                 &self.grammar.scope_names,
@@ -627,7 +650,11 @@ impl Tokenizer {
                                 line.len(),
                                 &text,
                             );
-                            self.apply_retokenizations(&mut tokens, tasks, &text)?;
+                            self.apply_retokenizations(
+                                &mut tokens,
+                                tasks,
+                                &text,
+                            )?;
                             let scopes = extend_scopes(
                                 &mut self.scopes,
                                 &self.grammar.scope_names,
@@ -657,15 +684,18 @@ impl Tokenizer {
                                 while_scanner: NO_SCANNER,
                             });
                         }
-                        RuleKind::IncludeOnly { .. } | RuleKind::Placeholder => unreachable!(),
+                        RuleKind::IncludeOnly { .. }
+                        | RuleKind::Placeholder => unreachable!(),
                     }
                 }
             }
             position = full.end.max(position);
         }
 
-        tokens
-            .retain(|token| token.range.start < token.range.end && token.range.start < line.len());
+        tokens.retain(|token| {
+            token.range.start < token.range.end
+                && token.range.start < line.len()
+        });
         for token in tokens.iter_mut() {
             token.range.end = token.range.end.min(line.len());
         }
@@ -674,18 +704,18 @@ impl Tokenizer {
         Ok((tokens, state))
     }
 
-    pub(crate) fn styles(&mut self, stack: ScopeStackId) -> &[Style] {
+    pub fn styles(&mut self, stack: ScopeStackId) -> &[Style] {
         self.ensure_styles(stack);
         let theme_count = self.themes.len();
         let start = stack as usize * theme_count;
         &self.style_rows[start..start + theme_count]
     }
 
-    pub(crate) fn contains_scope_stack(&self, stack: ScopeStackId) -> bool {
+    pub fn contains_scope_stack(&self, stack: ScopeStackId) -> bool {
         (stack as usize) < self.scopes.nodes.len()
     }
 
-    pub(crate) fn scope_names(&self, stack: ScopeStackId) -> Result<Vec<String>> {
+    pub fn scope_names(&self, stack: ScopeStackId) -> Result<Vec<String>> {
         if stack as usize >= self.scopes.nodes.len() {
             return Err(Error::InvalidScopeStack(stack));
         }
@@ -693,7 +723,9 @@ impl Tokenizer {
             .scopes
             .path(stack)
             .into_iter()
-            .map(|scope| scope_chunks(&self.grammar, &self.scopes, scope).concat())
+            .map(|scope| {
+                scope_chunks(&self.grammar, &self.scopes, scope).concat()
+            })
             .collect())
     }
 
@@ -711,8 +743,11 @@ impl Tokenizer {
         self.ensure_styles(parent);
         for theme in &mut self.themes {
             while theme.scope_count() < self.scopes.values.len() {
-                let chunks =
-                    scope_chunks(&self.grammar, &self.scopes, theme.scope_count() as ScopeId);
+                let chunks = scope_chunks(
+                    &self.grammar,
+                    &self.scopes,
+                    theme.scope_count() as ScopeId,
+                );
                 theme.register_scope(&chunks);
             }
         }
@@ -720,8 +755,10 @@ impl Tokenizer {
         let start = index * theme_count;
         let path = self.scopes.path(stack);
         for (theme_index, theme) in self.themes.iter().enumerate() {
-            self.style_rows[start + theme_index] =
-                theme.resolve_scope(&path, self.style_rows[parent_start + theme_index]);
+            self.style_rows[start + theme_index] = theme.resolve_scope(
+                &path,
+                self.style_rows[parent_start + theme_index],
+            );
         }
         self.scopes.nodes[index].styles_ready = true;
     }
@@ -762,7 +799,14 @@ impl Tokenizer {
                 scanner
             };
             if self
-                .find_next(scanner, text, *position, is_first_line, allow_g, captures)?
+                .find_next(
+                    scanner,
+                    text,
+                    *position,
+                    is_first_line,
+                    allow_g,
+                    captures,
+                )?
                 .is_none()
             {
                 state.stack.truncate(frame_index);
@@ -773,10 +817,13 @@ impl Tokenizer {
                 state.stack.truncate(frame_index);
                 break;
             }
-            let while_captures = match &self.grammar.rules[frame.rule as usize].kind {
-                RuleKind::BeginWhile { while_captures, .. } => Some(while_captures),
-                _ => None,
-            };
+            let while_captures =
+                match &self.grammar.rules[frame.rule as usize].kind {
+                    RuleKind::BeginWhile { while_captures, .. } => {
+                        Some(while_captures)
+                    }
+                    _ => None,
+                };
             if let Some(while_captures) = while_captures {
                 let tasks = emit_captures(
                     &mut self.scopes,
@@ -822,7 +869,12 @@ impl Tokenizer {
         let rule = &self.grammar.rules[frame.rule as usize];
         match &rule.kind {
             RuleKind::IncludeOnly { patterns } => {
-                collect_patterns(&self.grammar, patterns, &mut HashSet::new(), &mut raw);
+                collect_patterns(
+                    &self.grammar,
+                    patterns,
+                    &mut HashSet::new(),
+                    &mut raw,
+                );
             }
             RuleKind::BeginEnd {
                 patterns,
@@ -838,7 +890,12 @@ impl Tokenizer {
                             .unwrap_or(ScannerPatternRef::Empty),
                     ));
                 }
-                collect_patterns(&self.grammar, patterns, &mut HashSet::new(), &mut raw);
+                collect_patterns(
+                    &self.grammar,
+                    patterns,
+                    &mut HashSet::new(),
+                    &mut raw,
+                );
                 if *apply_end_last {
                     raw.push((
                         Action::End,
@@ -850,7 +907,12 @@ impl Tokenizer {
                 }
             }
             RuleKind::BeginWhile { patterns, .. } => {
-                collect_patterns(&self.grammar, patterns, &mut HashSet::new(), &mut raw);
+                collect_patterns(
+                    &self.grammar,
+                    patterns,
+                    &mut HashSet::new(),
+                    &mut raw,
+                );
             }
             _ => {}
         }
@@ -863,7 +925,12 @@ impl Tokenizer {
                 } else {
                     &mut other_injections
                 };
-                collect_patterns(&self.grammar, &[rule], &mut HashSet::new(), target);
+                collect_patterns(
+                    &self.grammar,
+                    &[rule],
+                    &mut HashSet::new(),
+                    target,
+                );
             }
         }
         left_injections.extend(raw);
@@ -881,8 +948,11 @@ impl Tokenizer {
         if let Some(id) = self.scopes.nodes[index].injections {
             return id;
         }
-        for scope in self.injection_scope_matches.len()..self.scopes.values.len() {
-            let chunks = scope_chunks(&self.grammar, &self.scopes, scope as ScopeId);
+        for scope in
+            self.injection_scope_matches.len()..self.scopes.values.len()
+        {
+            let chunks =
+                scope_chunks(&self.grammar, &self.scopes, scope as ScopeId);
             self.injection_scope_matches.push(
                 self.grammar
                     .injection_selectors
@@ -908,7 +978,9 @@ impl Tokenizer {
                 )
             })
             .collect();
-        let id = if let Some(id) = self.injection_set_ids.get(injections.as_slice()) {
+        let id = if let Some(id) =
+            self.injection_set_ids.get(injections.as_slice())
+        {
             *id
         } else {
             let id = self.injection_sets.len() as InjectionSetId;
@@ -946,7 +1018,9 @@ impl Tokenizer {
         let mut collect_leading_literals = true;
         for (_, pattern_ref) in patterns {
             let pattern = match pattern_ref {
-                ScannerPatternRef::Grammar(id) => &self.grammar.patterns[*id as usize],
+                ScannerPatternRef::Grammar(id) => {
+                    &self.grammar.patterns[*id as usize]
+                }
                 ScannerPatternRef::Dynamic(id) => &self.patterns[*id as usize],
                 ScannerPatternRef::Empty => "",
             };
@@ -989,13 +1063,14 @@ impl Tokenizer {
             regexes.push(regex);
         }
         let set = create_scanner_set(&regexes)?;
-        let match_params = match create_match_params(regexes.len(), self.regex_limits) {
-            Ok(params) => params,
-            Err(error) => {
-                free_scanner_set(set);
-                return Err(error);
-            }
-        };
+        let match_params =
+            match create_match_params(regexes.len(), self.regex_limits) {
+                Ok(params) => params,
+                Err(error) => {
+                    free_scanner_set(set);
+                    return Err(error);
+                }
+            };
         let id = self.scanners.len() as ScannerId;
         self.scanners.push(Scanner {
             actions: patterns.iter().map(|(action, _)| *action).collect(),
@@ -1032,7 +1107,9 @@ impl Tokenizer {
         mut tasks: Vec<Retokenize>,
         text: &str,
     ) -> Result<()> {
-        tasks.sort_by_key(|task| std::cmp::Reverse(task.range.end - task.range.start));
+        tasks.sort_by_key(|task| {
+            std::cmp::Reverse(task.range.end - task.range.start)
+        });
         for task in tasks {
             if task.range.is_empty() || task.range.end > text.len() {
                 continue;
@@ -1051,7 +1128,8 @@ impl Tokenizer {
                     while_scanner: NO_SCANNER,
                 }],
             };
-            let (mut replacement, _) = self.tokenize_line_owned(fragment, Some(state), false)?;
+            let (mut replacement, _) =
+                self.tokenize_line_owned(fragment, Some(state), false)?;
             for token in &mut replacement {
                 token.range.start += task.range.start;
                 token.range.end += task.range.start;
@@ -1081,7 +1159,8 @@ fn exact_regex_literal(pattern: &str) -> Option<Box<[u8]>> {
     let mut chars = pattern.chars();
     while let Some(ch) = chars.next() {
         match ch {
-            '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' => {
+            '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{'
+            | '}' | '|' => {
                 return None;
             }
             '\\' => {
@@ -1107,11 +1186,15 @@ fn exact_regex_literal(pattern: &str) -> Option<Box<[u8]>> {
                     return None;
                 }
                 let mut buffer = [0; 4];
-                literal.extend_from_slice(escaped.encode_utf8(&mut buffer).as_bytes());
+                literal.extend_from_slice(
+                    escaped.encode_utf8(&mut buffer).as_bytes(),
+                );
             }
             literal_char => {
                 let mut buffer = [0; 4];
-                literal.extend_from_slice(literal_char.encode_utf8(&mut buffer).as_bytes());
+                literal.extend_from_slice(
+                    literal_char.encode_utf8(&mut buffer).as_bytes(),
+                );
             }
         }
     }
@@ -1148,9 +1231,13 @@ fn find_next_regset(
         while chunk_end < text.len() && !text.is_char_boundary(chunk_end) {
             chunk_end += 1;
         }
-        if let Some((index, region)) =
-            search_regset(scanner, text.as_bytes(), chunk_start, chunk_end, options)?
-        {
+        if let Some((index, region)) = search_regset(
+            scanner,
+            text.as_bytes(),
+            chunk_start,
+            chunk_end,
+            options,
+        )? {
             copy_captures(region, captures);
             return Ok(Some(scanner.actions[index]));
         }
@@ -1194,23 +1281,30 @@ fn search_regset(
             message: onig_error(index, ptr::null_mut()),
         });
     }
-    let region = unsafe { onig_sys::onig_regset_get_region(scanner.set, index) };
+    let region =
+        unsafe { onig_sys::onig_regset_get_region(scanner.set, index) };
     if region.is_null() {
         return Err(Error::RegexSearch {
-            message: "Oniguruma returned a match without a capture region".to_owned(),
+            message: "Oniguruma returned a match without a capture region"
+                .to_owned(),
         });
     }
     Ok(Some((index as usize, region)))
 }
 
-fn copy_captures(region: *const onig_sys::OnigRegion, captures: &mut Vec<Option<Range<usize>>>) {
+fn copy_captures(
+    region: *const onig_sys::OnigRegion,
+    captures: &mut Vec<Option<Range<usize>>>,
+) {
     let region = unsafe { &*region };
     captures.clear();
     captures.reserve(region.num_regs as usize);
     for capture in 0..region.num_regs as usize {
         let begin = unsafe { *region.beg.add(capture) };
         let end = unsafe { *region.end.add(capture) };
-        captures.push((begin >= 0 && end >= 0).then_some(begin as usize..end as usize));
+        captures.push(
+            (begin >= 0 && end >= 0).then_some(begin as usize..end as usize),
+        );
     }
 }
 
@@ -1253,10 +1347,17 @@ fn collect_patterns(
         let rule = &grammar.rules[*id as usize];
         match &rule.kind {
             RuleKind::Match { pattern, .. } => {
-                output.push((Action::Rule(*id), ScannerPatternRef::Grammar(*pattern)));
+                output.push((
+                    Action::Rule(*id),
+                    ScannerPatternRef::Grammar(*pattern),
+                ));
             }
-            RuleKind::BeginEnd { begin, .. } | RuleKind::BeginWhile { begin, .. } => {
-                output.push((Action::Rule(*id), ScannerPatternRef::Grammar(*begin)));
+            RuleKind::BeginEnd { begin, .. }
+            | RuleKind::BeginWhile { begin, .. } => {
+                output.push((
+                    Action::Rule(*id),
+                    ScannerPatternRef::Grammar(*begin),
+                ));
             }
             RuleKind::IncludeOnly { patterns } => {
                 collect_patterns(grammar, patterns, seen, output);
@@ -1266,7 +1367,12 @@ fn collect_patterns(
     }
 }
 
-fn emit(tokens: &mut Vec<ScopeToken>, start: usize, end: usize, scopes: ScopeStackId) {
+fn emit(
+    tokens: &mut Vec<ScopeToken>,
+    start: usize,
+    end: usize,
+    scopes: ScopeStackId,
+) {
     if start >= end {
         return;
     }
@@ -1326,7 +1432,8 @@ fn emit_captures(
         let end = pair[1];
         let mut scopes = base;
         for capture in captures {
-            if let Some(range) = matches.get(capture.index).and_then(Clone::clone)
+            if let Some(range) =
+                matches.get(capture.index).and_then(Clone::clone)
                 && range.start <= start
                 && range.end >= end
             {
@@ -1385,7 +1492,11 @@ fn emit_captures(
         .collect()
 }
 
-fn replace_range(tokens: &mut Vec<ScopeToken>, range: Range<usize>, replacement: Vec<ScopeToken>) {
+fn replace_range(
+    tokens: &mut Vec<ScopeToken>,
+    range: Range<usize>,
+    replacement: Vec<ScopeToken>,
+) {
     let mut output = Vec::with_capacity(tokens.len() + replacement.len());
     let mut inserted = false;
     for token in tokens.drain(..) {
@@ -1528,7 +1639,10 @@ fn resolve_backrefs<'a>(
     let bytes = pattern.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'\\' && index + 1 < bytes.len() && bytes[index + 1].is_ascii_digit() {
+        if bytes[index] == b'\\'
+            && index + 1 < bytes.len()
+            && bytes[index + 1].is_ascii_digit()
+        {
             let capture = (bytes[index + 1] - b'0') as usize;
             if let Some(range) = captures.get(capture).and_then(Clone::clone) {
                 output.push_str(&regex_escape(&text[range]));
@@ -1564,8 +1678,14 @@ fn initialize_oniguruma() {
 fn onig_error(code: i32, error_info: *mut onig_sys::OnigErrorInfo) -> String {
     let mut buffer = [0_u8; 256];
     unsafe {
-        if !error_info.is_null() && onig_sys::onig_is_error_code_needs_param(code) != 0 {
-            onig_sys::onig_error_code_to_str(buffer.as_mut_ptr(), code, error_info);
+        if !error_info.is_null()
+            && onig_sys::onig_is_error_code_needs_param(code) != 0
+        {
+            onig_sys::onig_error_code_to_str(
+                buffer.as_mut_ptr(),
+                code,
+                error_info,
+            );
         } else {
             onig_sys::onig_error_code_to_str(buffer.as_mut_ptr(), code);
         }
@@ -1581,7 +1701,10 @@ mod tests {
 
     #[test]
     fn recognizes_only_exact_regex_literals() {
-        assert_eq!(exact_regex_literal("=>").as_deref(), Some(b"=>".as_slice()));
+        assert_eq!(
+            exact_regex_literal("=>").as_deref(),
+            Some(b"=>".as_slice())
+        );
         assert_eq!(
             exact_regex_literal(r"\}\[\\").as_deref(),
             Some(b"}[\\".as_slice())
