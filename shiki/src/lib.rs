@@ -20,8 +20,7 @@
 //!     .build()?;
 //!
 //! let html = highlighter.code_to_html("fn main() {}", "rust")?;
-//! assert!(html.contains("fn"));
-//! # Ok::<(), shiki::Error>(())
+//! assert!(html.contains("fn") );
 //! ```
 //!
 //! # Enabling every bundled language
@@ -40,7 +39,6 @@
 //!
 //! let mut highlighter = engine.highlighter();
 //! let html = highlighter.code_to_html("const value = 1", "javascript")?;
-//! # Ok::<(), shiki::Error>(())
 //! ```
 //!
 //! # Incremental documents and parallel sessions
@@ -62,7 +60,6 @@
 //! let mut state = session.initial_state();
 //! let tokens = session.tokenize_line("/* open", &mut state, true)?;
 //! assert!(!tokens.is_empty());
-//! # Ok::<(), shiki::Error>(())
 //! ```
 //!
 //! # Custom output formats
@@ -78,7 +75,6 @@
 //! let options = HtmlOptions::default().without_line_wrapper();
 //! let mut renderer = HtmlRenderer::new(&options);
 //! let html = highlighter.render("let value = 1", "rust", &mut renderer)?;
-//! # Ok::<(), shiki::Error>(())
 //! ```
 
 mod definition;

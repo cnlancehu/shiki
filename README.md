@@ -1,4 +1,4 @@
-# Shiki for Rust
+# shiki-rs
 
 <p align="center">
   <a href="https://crates.io/crates/shiki"><img alt="Crates.io" src="https://img.shields.io/crates/v/shiki"></a>
@@ -6,7 +6,7 @@
 
 **_Highly Experimental !!_**
 
-A native Rust implementation of Shiki's TextMate highlighting model. It uses
+A native Rust TextMate grammar tokenization and Shiki-compatible highlighter. It uses
 Oniguruma directly, supports embedded grammars and injection selectors, and
 keeps runtime scope, grammar, theme, and color data behind compact numeric IDs.
 
