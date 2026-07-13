@@ -4,6 +4,7 @@ edition.workspace = true
 license.workspace = true
 version.workspace = true
 repository.workspace = true
+keywords.workspace = true
 description = "Compile-time highlighter generation for shiki"
 readme = "README.md"
 

@@ -7,7 +7,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 version = "0.0.2"
 repository = "https://github.com/cnlancehu/shiki"
-categories = ["highlighting", "syntax"]
+keywords = ["highlighting", "syntax"]
 
 [workspace.dependencies]
 onig_sys = { version = "69.9.3", default-features = false }
@@ -18,10 +18,10 @@ proc-macro2 = "1.0.106"
 quote = "1.0.46"
 syn = { version = "2.0.118", features = ["full"] }
 
-shiki = { version = "0.0.1", path = "shiki" }
-shiki-langs = { version = "0.0.1", path = "shiki-langs" }
-shiki-macros = { version = "0.0.1", path = "shiki-macros" }
-shiki-themes = { version = "0.0.1", path = "shiki-themes" }
+shiki = { version = "0.0.2", path = "shiki" }
+shiki-langs = { version = "0.0.2", path = "shiki-langs" }
+shiki-macros = { version = "0.0.2", path = "shiki-macros" }
+shiki-themes = { version = "0.0.2", path = "shiki-themes" }
 
 [profile.release]
 codegen-units = 1

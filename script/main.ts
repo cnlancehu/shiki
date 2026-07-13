@@ -401,7 +401,7 @@ macro_rules! themes {
 }
 
 await Promise.all([generateLanguages(), generateThemes()]);
-const formatter = Bun.spawn(["cargo", "fmt", "--all"], {
+const formatter = Bun.spawn(["cargo", "+nightly", "fmt", "--all"], {
   cwd: root,
   stdout: "inherit",
   stderr: "inherit",

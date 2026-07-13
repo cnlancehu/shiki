@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "generate": "bun run script/main.ts",
+    "cpub": "cargo publish --allow-dirty",
     "fmt": "bun --bun oxfmt"
   },
   "dependencies": {
