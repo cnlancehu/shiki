@@ -3,8 +3,8 @@
 **Compile-time highlighters for `shiki`.**
 
 `shiki-macros` resolves bundled language dependencies, compiles TextMate
-grammar and theme IR in the proc-macro host, and emits Rust data structures
-directly into the target crate. Runtime snapshot deserialization is not used.
+grammar and theme IR in the proc-macro host, and embeds a compact precompiled
+snapshot in the target crate. It does not emit one Rust expression per rule.
 
 ## Installation
 
@@ -32,6 +32,15 @@ let html = highlighter.code_to_html("const value = 1", "javascript")?;
 Language and bundled theme IDs are string literals. Unknown IDs are reported as
 compile errors. Language dependencies and injection grammars are included
 automatically.
+
+Select the complete bundled catalog with `languages: all`:
+
+```rust,ignore
+let engine = shiki_macros::highlighter_engine! {
+    languages: all,
+    themes: [("default", "github-dark")],
+};
+```
 
 Each macro call site owns one `LazyLock<HighlighterEngine>`. `highlighter!`
 returns a fresh `Highlighter` backed by that shared engine.
@@ -65,9 +74,23 @@ cargo add shiki --no-default-features
 cargo add shiki-macros
 ```
 
-With this setup, target-side `shiki` does not depend on `serde` or `serde_json`.
-The proc macro still uses them on the host because the published language and
-theme assets are JSON inputs.
+With this setup, target-side `shiki` does not depend on `serde`, `serde_json`, or
+`bincode`. The proc macro still uses JSON support on the host because the
+published language and theme assets are JSON inputs.
+
+## Snapshot format
+
+The macro serializes compiled IR with a purpose-built, versioned codec. Integer
+IDs and lengths use variable-width encoding, strings are deduplicated across the
+whole engine, and the final byte stream is compressed with LZ4. The target
+compiler sees one byte string and one loader call instead of a large syntax tree
+of vector and enum constructors.
+
+The first call at a macro site restores the snapshot into normal `shiki` runtime
+types. Later calls reuse the `LazyLock`, so `highlighter!` only creates a cheap
+per-highlighter tokenizer table and `highlighter_engine!` returns an `Arc`-backed
+engine clone. This format is internal and versioned together with `shiki`; it is
+not intended as a persistent interchange format.
 
 ## What is compiled ahead of time
 
@@ -82,10 +105,11 @@ creation still happen in the target process.
 
 ## Trade-offs
 
-Compile-time generation reduces runtime construction work but emits more Rust
-code. Selecting many large grammars increases proc-macro work, target compile
-time, and binary data size. Prefer the smallest stable language and theme set
-that fits the application.
+Selecting many large grammars still increases proc-macro work, snapshot size,
+first-use restoration time, and runtime IR memory. In particular, every root
+grammar has a separately resolved dependency closure, so `languages: all` is
+substantially larger than a typical application-specific set. Prefer the
+smallest stable language and theme set that fits the application.
 
 Use a runtime `HighlighterBuilder` instead when definitions must be selected or
 loaded dynamically.

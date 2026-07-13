@@ -34,3 +34,16 @@ fn creates_independent_sessions_from_a_shared_engine() {
     assert!(!first_tokens.is_empty());
     assert!(second_tokens.len() > 1);
 }
+
+#[test]
+fn snapshot_roundtrip_is_deterministic() {
+    let engine = highlighter_engine! {
+        languages: ["javascript"],
+        themes: [("dark", "catppuccin-mocha")],
+    };
+    let snapshot = engine.__to_snapshot();
+    let restored = shiki::HighlighterEngine::__from_snapshot(&snapshot);
+
+    assert_eq!(restored.language_count(), engine.language_count());
+    assert_eq!(restored.__to_snapshot(), snapshot);
+}

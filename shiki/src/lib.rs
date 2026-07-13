@@ -7,6 +7,7 @@ mod highlighter;
 mod matcher;
 mod raw;
 mod renderer;
+mod snapshot;
 mod theme;
 mod tokenizer;
 

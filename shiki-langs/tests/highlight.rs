@@ -190,11 +190,11 @@ fn renders_multiple_themes_as_css_variables() {
         )
         .unwrap();
 
-    assert!(html.contains("data-themes=\"dark light\""), "{html}");
+    assert!(!html.contains("data-themes="), "{html}");
     assert!(html.contains("--dark:#a6e3a1"), "{html}");
     assert!(html.contains("--light:#40a02b"), "{html}");
     assert!(html.contains("color:var(--light)"), "{html}");
-    assert!(html.contains("class=\"shiki code-block\""), "{html}");
+    assert!(html.contains("class=\"code-block\""), "{html}");
     assert!(html.contains("class=\"language-rust\""), "{html}");
     assert!(html.contains("data-language=\"rust\""), "{html}");
     assert!(!html.contains("class=\"line\""), "{html}");

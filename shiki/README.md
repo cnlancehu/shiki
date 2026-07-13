@@ -126,15 +126,15 @@ external injection targets to runtime grammars.
 | ------- | ------- | ------------------------------------------------------------------------------- |
 | `json`  | yes     | Enables `serde`/`serde_json`, runtime JSON parsing, and JSON-backed definitions |
 
-Compile without the JSON stack when the target only consumes Rust IR generated
+Compile without the JSON stack when the target only consumes snapshots generated
 by `shiki-macros`:
 
 ```console
 cargo add shiki --no-default-features
 ```
 
-In that configuration, target-side `shiki` depends on `onig_sys` and
-`thiserror`, but not `serde` or `serde_json`.
+In that configuration, target-side `shiki` depends on `onig_sys`, `thiserror`,
+and the small `lz4_flex` snapshot codec, but not `serde` or `serde_json`.
 
 ## Performance model
 

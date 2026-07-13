@@ -10,7 +10,7 @@
 `shiki-rs` is a native Rust TextMate tokenizer and Shiki-compatible syntax
 highlighter. It uses Oniguruma directly, supports embedded grammars and
 injection selectors, provides bundled languages and themes, and can generate a
-precompiled highlighter as Rust code.
+precompiled highlighter as a compact binary snapshot.
 
 > The project is published, but the API is still experimental while
 > compatibility and performance work continues.
@@ -226,20 +226,23 @@ Definitions may also be parsed or constructed separately with `RawGrammar`,
 `LanguageInput` adds aliases and external injection targets to runtime
 grammars.
 
-Disable JSON support when only generated Rust IR is needed:
+Disable JSON support when only a generated snapshot is needed:
 
 ```console
 cargo add shiki --no-default-features
 ```
 
 Without default features, target-side `shiki` does not depend on `serde` or
-`serde_json`.
+`serde_json`. Snapshot loading uses the small, pure-Rust `lz4_flex` block
+decoder.
 
 ## Compile-time highlighters
 
 `shiki-macros` resolves and compiles bundled grammars and themes while the proc
-macro runs, then emits Rust data structures directly. There is no runtime
-grammar JSON parsing or snapshot deserialization.
+macro runs, serializes the resulting IR into a versioned, LZ4-compressed binary
+snapshot, and emits that snapshot as one byte string. The target compiler no
+longer has to type-check and generate code for every grammar rule. The snapshot
+is restored once by a `LazyLock`; runtime grammar JSON parsing is not used.
 
 ```rust
 let mut highlighter = shiki_macros::highlighter! {
@@ -257,6 +260,15 @@ Use `highlighter_engine!` to obtain a cloneable shared engine instead. Native
 Oniguruma scanners still initialize lazily on first use because they contain
 process-local pointers.
 
+Use `languages: all` to select every bundled language:
+
+```rust
+let engine = shiki_macros::highlighter_engine! {
+    languages: all,
+    themes: [("dark", "catppuccin-mocha")],
+};
+```
+
 For a macro-only target without target-side JSON dependencies:
 
 ```console
@@ -264,9 +276,10 @@ cargo add shiki --no-default-features
 cargo add shiki-macros
 ```
 
-The proc macro still parses bundled JSON assets on the host. Generating large
-language sets trades runtime startup work for additional Rust compile time and
-generated code size.
+The proc macro still parses bundled JSON assets on the host. The snapshot codec
+is purpose-built and does not use `serde`, `serde_json`, or `bincode` on the
+target. Very large language sets still create large runtime rule tables; prefer
+the smallest stable set unless arbitrary-language service is a requirement.
 
 ## Performance guidance
 

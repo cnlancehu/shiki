@@ -461,10 +461,50 @@ impl HighlighterEngine {
     }
 
     #[doc(hidden)]
+    pub fn __to_snapshot(&self) -> Vec<u8> {
+        crate::snapshot::encode(self)
+    }
+
+    #[doc(hidden)]
+    pub fn __from_snapshot(source: &[u8]) -> Self {
+        let parts = crate::snapshot::decode(source).unwrap_or_else(|error| {
+            panic!("invalid shiki precompiled snapshot: {error}")
+        });
+        Self::from_owned_parts(
+            parts.languages,
+            parts.grammars,
+            parts.themes,
+            parts.regex_limits,
+        )
+    }
+
+    #[doc(hidden)]
     pub fn __from_rust_parts(
         languages: Vec<(&'static str, usize)>,
         grammars: Vec<crate::grammar::CompiledGrammar>,
         themes: Vec<(&'static str, &'static str, Theme)>,
+        regex_limits: RegexLimits,
+    ) -> Self {
+        Self::from_owned_parts(
+            languages
+                .into_iter()
+                .map(|(name, index)| (name.to_owned(), index))
+                .collect(),
+            grammars,
+            themes
+                .into_iter()
+                .map(|(name, css_name, theme)| {
+                    (name.to_owned(), css_name.to_owned(), theme)
+                })
+                .collect(),
+            regex_limits,
+        )
+    }
+
+    fn from_owned_parts(
+        languages: Vec<(String, usize)>,
+        grammars: Vec<crate::grammar::CompiledGrammar>,
+        themes: Vec<(String, String, Theme)>,
         regex_limits: RegexLimits,
     ) -> Self {
         let compiled = grammars
@@ -477,17 +517,14 @@ impl HighlighterEngine {
         let themes = themes
             .into_iter()
             .map(|(name, css_name, theme)| NamedTheme {
-                name: name.to_owned(),
-                css_name: css_name.to_owned(),
+                name,
+                css_name,
                 theme: Arc::new(theme),
             })
             .collect();
         Self {
             inner: Arc::new(EngineInner {
-                languages: languages
-                    .into_iter()
-                    .map(|(name, index)| (name.to_owned(), index))
-                    .collect(),
+                languages: languages.into_iter().collect(),
                 compiled,
                 themes,
                 regex_limits,
