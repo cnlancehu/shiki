@@ -5,7 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 categories.workspace = true
-description = "Native TextMate grammar tokenization and Shiki-compatible highlighting"
+description = "Fast TextMate highlighting for Rust"
+readme = "README.md"
 
 [features]
 default = ["json"]

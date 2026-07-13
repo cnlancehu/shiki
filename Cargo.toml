@@ -5,7 +5,7 @@ members = ["shiki", "shiki-langs", "shiki-macros", "shiki-themes"]
 [workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-version = "0.0.1"
+version = "0.0.2"
 repository = "https://github.com/cnlancehu/shiki"
 categories = ["highlighting", "syntax"]
 

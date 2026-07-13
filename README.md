@@ -1,74 +1,105 @@
 # shiki-rs
 
 <p align="center">
-  <a href="https://crates.io/crates/shiki"><img alt="Crates.io" src="https://img.shields.io/crates/v/shiki"></a>
+  <a href="https://crates.io/crates/shiki"><img alt="shiki on crates.io" src="https://img.shields.io/crates/v/shiki"></a>
+  <a href="https://docs.rs/shiki"><img alt="shiki documentation" src="https://img.shields.io/docsrs/shiki"></a>
 </p>
 
-**_Highly Experimental !!_**
+**Fast TextMate highlighting for Rust.**
 
-A native Rust TextMate grammar tokenization and Shiki-compatible highlighter. It uses
-Oniguruma directly, supports embedded grammars and injection selectors, and
-keeps runtime scope, grammar, theme, and color data behind compact numeric IDs.
+`shiki-rs` is a native Rust TextMate tokenizer and Shiki-compatible syntax
+highlighter. It uses Oniguruma directly, supports embedded grammars and
+injection selectors, provides bundled languages and themes, and can generate a
+precompiled highlighter as Rust code.
 
-## Quick Start
+> The project is published, but the API is still experimental while
+> compatibility and performance work continues.
 
-The root example bundles only Rust and renders highlighted HTML:
+## Crates
+
+| Crate                                                   | Purpose                                                              |
+| ------------------------------------------------------- | -------------------------------------------------------------------- |
+| [`shiki`](https://crates.io/crates/shiki)               | Core tokenizer, themes, engines, sessions, token APIs, and renderers |
+| [`shiki-langs`](https://crates.io/crates/shiki-langs)   | 253 bundled TextMate language grammars                               |
+| [`shiki-themes`](https://crates.io/crates/shiki-themes) | 65 bundled Shiki/TextMate themes                                     |
+| [`shiki-macros`](https://crates.io/crates/shiki-macros) | Compile-time highlighter generation                                  |
+
+## Installation
+
+For normal runtime construction with bundled languages and themes:
 
 ```console
 cargo add shiki shiki-langs shiki-themes
 ```
 
-Its essential setup is:
+For compile-time generated highlighters:
+
+```console
+cargo add shiki shiki-macros
+```
+
+## Quick start
+
+Bundle only the languages the application needs:
 
 ```rust
 use shiki::{Highlighter, LanguageBundle};
 
 static LANGUAGES: LanguageBundle = shiki_langs::languages![rust];
 
-let mut highlighter = Highlighter::builder()
-    .bundle(&LANGUAGES)
-    .languages(["rust"])
-    .theme(&shiki_themes::CATPPUCCIN_MOCHA)
-    .build()?;
+fn main() -> shiki::Result<()> {
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+        .build()?;
 
-let html = highlighter.code_to_html("let answer = 91;", "rust")?;
+    let html = highlighter.code_to_html("let answer = 42;", "rust")?;
+    println!("{html}");
+    Ok(())
+}
 ```
 
-`languages!` resolves and embeds transitive dependencies at compile time. For
-example, bundling Vue also includes the grammars needed by Vue. The
-`languages(...)` builder call chooses which bundled roots are enabled in that
-highlighter.
-
-## Runtime Definitions
-
-Runtime TextMate JSON remains supported:
+`languages!` accepts generated identifiers and aliases. It also includes every
+transitive grammar dependency required by the selected roots. For example,
+selecting Vue includes the grammars injected into Vue documents.
 
 ```rust
-let highlighter = Highlighter::builder()
-    .json_language("custom", grammar_json)?
-    .json_theme("custom", theme_json)?
-    .build()?;
+static WEB_LANGUAGES: shiki::LanguageBundle =
+    shiki_langs::languages![html, css, javascript, typescript, vue];
 ```
 
-To parse or construct definitions separately, use `RawGrammar::from_json` and
-`RawTheme::from_json`, then pass them directly with `language` and `theme`.
-`RawGrammar`, `RawRule`, `RawTheme`, and their nested theme types are public and
-can also be constructed directly. Use `LanguageInput` with
-`language_definition` when runtime grammars need aliases or external
-`inject_to` targets.
+The `.languages(...)` builder call chooses which bundled roots are enabled in a
+particular engine. Omitting it enables every root in that bundle.
 
-Bundled definitions use the same raw types. Generated modules initialize one
-static `RawGrammar` or `RawTheme` backed by borrowed strings and slices;
-runtime JSON uses the owned variants of those same containers.
-`LanguageDefinition` only stores bundle metadata and a reference to the static
-grammar. No JSON source or parallel static raw model is retained.
+## Every bundled language
 
-## Multiple Themes
+Use `shiki_langs::all()` when dynamic language selection matters more than
+startup cost and memory:
 
-Theme names become CSS variable prefixes:
+```rust
+use shiki::Highlighter;
+
+fn build_all() -> shiki::Result<shiki::HighlighterEngine> {
+    let languages = shiki_langs::all();
+    Highlighter::builder()
+        .bundle(&languages)
+        .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+        .build_engine()
+}
+```
+
+An engine initializes each language tokenizer lazily. The immutable compiled
+grammar IR is shared, while scanners, regex caches, scope stacks, and style rows
+are created only for languages that are used.
+
+## Multiple themes
+
+Theme output names become CSS variable prefixes:
 
 ```rust
 use shiki::{Highlighter, LanguageBundle};
+
 static LANGUAGES: LanguageBundle = shiki_langs::languages![rust];
 
 let mut highlighter = Highlighter::builder()
@@ -83,30 +114,58 @@ let mut highlighter = Highlighter::builder()
 let html = highlighter.code_to_html("let themed = true;", "rust")?;
 ```
 
-Each token contains variables such as `--dark` and `--light`, plus corresponding
-font and optional background variables. `HtmlOptions` controls classes,
-attributes, line wrappers, the default theme, root colors, and whether default
-theme declarations are emitted.
+Tokens contain variables such as `--dark`, `--light`, and only the font or
+background variables that are actually needed. The HTML renderer merges
+adjacent tokens with the same resolved visual style and avoids wrapping plain
+whitespace when doing so has no visual effect.
+
+`HtmlOptions` controls:
+
+- `<pre>` and `<code>` classes and attributes;
+- line wrappers and their class;
+- the default theme used for inline fallback declarations;
+- root foreground and background output;
+- theme class and `data-themes` output;
+- variable-only token styles for application-managed theme switching.
+
+```rust
+let options = shiki::HtmlOptions::default()
+    .default_theme("light")
+    .pre_class("code-block")
+    .code_class("language-rust")
+    .pre_attribute("data-language", "rust")
+    .without_line_wrapper()
+    .variables_only();
+
+let html = highlighter.code_to_html_with_options(
+    "let value = 1;",
+    "rust",
+    &options,
+)?;
+```
 
 ## Token APIs
 
-- `code_to_html` streams tokenization directly into HTML.
-- `code_to_scope_tokens` returns compact ranges and `ScopeStackId` values.
-- `code_to_tokens` resolves one theme into owned token values.
-- `code_to_tokens_with_themes` resolves all configured themes.
-- `tokenize_line` and `GrammarState` support editors and incremental documents.
+Choose the least expensive representation that fits the consumer:
 
-Reuse a `Highlighter` whenever possible. Compiled scanners, regexes, scope
-transitions, injection results, and style rows are cached on first use.
+- `code_to_html` streams tokenization directly into compact HTML.
+- `code_to_html_with_options` customizes the built-in HTML renderer.
+- `code_to_scope_tokens` returns source ranges and compact `ScopeStackId`s.
+- `code_to_tokens` returns owned tokens resolved against one theme.
+- `code_to_tokens_with_themes` returns owned tokens for every configured theme.
+- `tokenize_line` and `GrammarState` support incremental documents and editors.
+- `tokenizer` exposes the per-language tokenizer for advanced integrations.
 
-## Shared Engines and Document Sessions
+## Shared engines and sessions
 
-Use a shared engine when multiple documents or threads need independent
-tokenization state. Grammar IR and themes stay shared while dynamic scanners,
-scope transitions, and styles are owned by each session.
+Reuse a `Highlighter` for one long-lived workflow, or share a
+`HighlighterEngine` across independent documents. Engines share immutable
+grammar and theme data. Each `LanguageSession` owns its mutable scanner and
+scope caches, so sessions may advance independently without sharing document
+state.
 
 ```rust
-let engine = Highlighter::builder()
+let engine = shiki::Highlighter::builder()
     .bundle(&LANGUAGES)
     .languages(["rust"])
     .theme(&shiki_themes::CATPPUCCIN_MOCHA)
@@ -114,18 +173,73 @@ let engine = Highlighter::builder()
 
 let mut session = engine.session("rust")?;
 let mut state = session.initial_state();
-let tokens = session.tokenize_line("let value = 1;", &mut state, true)?;
+
+let first = session.tokenize_line("/* open", &mut state, true)?;
+let second = session.tokenize_line("close */", &mut state, false)?;
 ```
 
-Legacy `Highlighter` values can release their accumulated dynamic caches with
-`clear_language_cache` or `clear_all_caches`.
+Use `cache_stats` to inspect initialized caches. A reusable `Highlighter` can
+release them with `clear_language_cache` or `clear_all_caches`.
 
-## Compile-time Highlighters
+## Custom renderers
 
-`shiki-macros` compiles bundled TextMate grammars and themes while the proc
-macro runs. The expansion generates Rust grammar/theme structures directly and
-keeps one shared engine per macro call site; it performs no runtime snapshot
-deserialization.
+`Renderer` separates tokenization from output. `HtmlRenderer` is the built-in
+streaming implementation; ANSI, structured data, or application-specific
+renderers can implement the same trait.
+
+```rust
+use shiki::{Highlighter, Renderer};
+
+struct TokenCount;
+
+impl Renderer for TokenCount {
+    type Output = usize;
+
+    fn render(
+        &mut self,
+        highlighter: &mut Highlighter,
+        code: &str,
+        language: &str,
+    ) -> shiki::Result<Self::Output> {
+        Ok(highlighter
+            .code_to_scope_tokens(code, language)?
+            .iter()
+            .map(Vec::len)
+            .sum())
+    }
+}
+```
+
+## Runtime grammars and themes
+
+The default `json` feature supports runtime TextMate grammar and theme JSON:
+
+```rust
+let highlighter = shiki::Highlighter::builder()
+    .json_language("custom", grammar_json)?
+    .json_theme("custom", theme_json)?
+    .build()?;
+```
+
+Definitions may also be parsed or constructed separately with `RawGrammar`,
+`RawRule`, `RawTheme`, `RawThemeRule`, and their nested raw container types.
+`LanguageInput` adds aliases and external injection targets to runtime
+grammars.
+
+Disable JSON support when only generated Rust IR is needed:
+
+```console
+cargo add shiki --no-default-features
+```
+
+Without default features, target-side `shiki` does not depend on `serde` or
+`serde_json`.
+
+## Compile-time highlighters
+
+`shiki-macros` resolves and compiles bundled grammars and themes while the proc
+macro runs, then emits Rust data structures directly. There is no runtime
+grammar JSON parsing or snapshot deserialization.
 
 ```rust
 let mut highlighter = shiki_macros::highlighter! {
@@ -135,19 +249,39 @@ let mut highlighter = shiki_macros::highlighter! {
         ("light", "catppuccin-latte"),
     ],
 };
+
+let html = highlighter.code_to_html("const value = 1", "javascript")?;
 ```
 
-Use `highlighter_engine!` with the same input to obtain a cloneable
-`HighlighterEngine`. Native Oniguruma objects contain process-local pointers,
-so they are initialized and cached on first use; JSON parsing, grammar
-expansion, injection resolution, scope interning, and theme compilation have
-already happened at Rust compile time.
+Use `highlighter_engine!` to obtain a cloneable shared engine instead. Native
+Oniguruma scanners still initialize lazily on first use because they contain
+process-local pointers.
 
-Applications that only consume generated highlighters can remove the target-side
-JSON stack while the proc macro keeps parsing bundled assets on the host:
+For a macro-only target without target-side JSON dependencies:
 
-```toml
-[dependencies]
-shiki = { version = "0.0.1", default-features = false }
-shiki-macros = "0.0.1"
+```console
+cargo add shiki --no-default-features
+cargo add shiki-macros
 ```
+
+The proc macro still parses bundled JSON assets on the host. Generating large
+language sets trades runtime startup work for additional Rust compile time and
+generated code size.
+
+## Performance guidance
+
+- Reuse engines, highlighters, and sessions rather than rebuilding them per request.
+- Bundle only required roots unless languages are selected dynamically.
+- Keep document state and use `tokenize_line` for incremental updates.
+- Prefer scope tokens or streaming renderers when owned themed tokens are unnecessary.
+- TextMate tokenization is line-oriented; extremely long minified lines are a harder workload than normal source files.
+- Proc macros remove grammar/theme compilation from runtime, but token matching still happens at runtime.
+
+## License
+
+This project is licensed under either of:
+
+- Apache License, Version 2.0
+- MIT License
+
+at your option.

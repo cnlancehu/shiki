@@ -5,7 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Bundled TextMate themes for shiki"
-include = ["Cargo.toml", "src/**", "assets/**"]
+readme = "README.md"
+include = ["Cargo.toml", "README.md", "src/**", "assets/**"]
 
 [dependencies]
 shiki.workspace = true

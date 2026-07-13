@@ -5,6 +5,7 @@ license.workspace = true
 version.workspace = true
 repository.workspace = true
 description = "Compile-time highlighter generation for shiki"
+readme = "README.md"
 
 [lib]
 proc-macro = true

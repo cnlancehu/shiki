@@ -1,16 +1,4 @@
-//! Compile bundled TextMate grammars and themes into generated Rust data structures.
-//!
-//! `highlighter!` returns a fresh [`shiki::Highlighter`] backed by one engine shared at
-//! the macro call site. `highlighter_engine!` returns a clone of that shared engine.
-//!
-//! ```
-//! let mut highlighter = shiki_macros::highlighter! {
-//!     languages: ["rust"],
-//!     themes: [("dark", "catppuccin-mocha")],
-//! };
-//! let html = highlighter.code_to_html("let value = 1;", "rust")?;
-//! # Ok::<(), shiki::Error>(())
-//! ```
+#![doc = include_str!("../README.md")]
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};

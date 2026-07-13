@@ -233,19 +233,44 @@ fn render_html(
                 None,
             );
         }
+        let mut run_start = 0;
+        let mut run_end = 0;
+        let mut run_styles = Vec::with_capacity(themes.len());
         for token in &line {
-            output.push_str("<span style=\"");
-            write_token_style(
+            let styles = tokenizer.styles(token.scopes);
+            if !run_styles.is_empty()
+                && run_end == token.range.start
+                && styles_equivalent(&run_styles, styles, themes)
+            {
+                run_end = token.range.end;
+                continue;
+            }
+            if !run_styles.is_empty() {
+                write_token_run(
+                    &mut output,
+                    &source[run_start..run_end],
+                    &run_styles,
+                    themes,
+                    default_index,
+                    multiple,
+                    options.include_default_theme_styles,
+                );
+            }
+            run_start = token.range.start;
+            run_end = token.range.end;
+            run_styles.clear();
+            run_styles.extend_from_slice(styles);
+        }
+        if !run_styles.is_empty() {
+            write_token_run(
                 &mut output,
-                tokenizer.styles(token.scopes),
+                &source[run_start..run_end],
+                &run_styles,
                 themes,
                 default_index,
                 multiple,
                 options.include_default_theme_styles,
             );
-            output.push_str("\">");
-            push_escaped_html(&mut output, &source[token.range.clone()]);
-            output.push_str("</span>");
         }
         if options.line_class.is_some() {
             output.push_str("</span>");
@@ -253,6 +278,61 @@ fn render_html(
     }
     output.push_str("</code></pre>");
     Ok(output)
+}
+
+fn styles_equivalent(
+    left: &[Style],
+    right: &[Style],
+    themes: &[NamedTheme],
+) -> bool {
+    left.len() == right.len()
+        && left.len() == themes.len()
+        && left
+            .iter()
+            .zip(right)
+            .zip(themes)
+            .all(|((left, right), theme)| {
+                left.foreground
+                    .unwrap_or_else(|| theme.theme.foreground_id())
+                    == right
+                        .foreground
+                        .unwrap_or_else(|| theme.theme.foreground_id())
+                    && left.background == right.background
+                    && left.font_style.unwrap_or_default()
+                        == right.font_style.unwrap_or_default()
+            })
+}
+
+fn write_token_run(
+    output: &mut String,
+    content: &str,
+    styles: &[Style],
+    themes: &[NamedTheme],
+    default_index: usize,
+    multiple: bool,
+    include_default_theme_styles: bool,
+) {
+    let unstyled_whitespace = content.chars().all(char::is_whitespace)
+        && styles.iter().all(|style| {
+            style.background.is_none()
+                && style.font_style.unwrap_or_default() == FontStyle::default()
+        });
+    if unstyled_whitespace {
+        push_escaped_html(output, content);
+        return;
+    }
+    output.push_str("<span style=\"");
+    write_token_style(
+        output,
+        styles,
+        themes,
+        default_index,
+        multiple,
+        include_default_theme_styles,
+    );
+    output.push_str("\">");
+    push_escaped_html(output, content);
+    output.push_str("</span>");
 }
 
 fn write_token_style(
@@ -307,11 +387,21 @@ fn write_token_style(
     }
     let default = &themes[default_index].css_name;
     if include_default_theme_styles {
-        write!(
-            output,
-            "color:var(--{default});font-style:var(--{default}-font-style);font-weight:var(--{default}-font-weight);text-decoration:var(--{default}-text-decoration);"
-        )
-        .expect("write to String");
+        write!(output, "color:var(--{default});").expect("write to String");
+        let default_font_style =
+            styles[default_index].font_style.unwrap_or_default();
+        if default_font_style.contains(FontStyle::ITALIC) {
+            write!(output, "font-style:var(--{default}-font-style);")
+                .expect("write to String");
+        }
+        if default_font_style.contains(FontStyle::BOLD) {
+            write!(output, "font-weight:var(--{default}-font-weight);")
+                .expect("write to String");
+        }
+        if decoration(default_font_style) != "none" {
+            write!(output, "text-decoration:var(--{default}-text-decoration);")
+                .expect("write to String");
+        }
         if has_background {
             write!(output, "background-color:var(--{default}-bg,transparent);")
                 .expect("write to String");
@@ -320,22 +410,17 @@ fn write_token_style(
 }
 
 fn write_font_variables(output: &mut String, name: &str, style: FontStyle) {
-    let font_style = if style.contains(FontStyle::ITALIC) {
-        "italic"
-    } else {
-        "normal"
-    };
-    let font_weight = if style.contains(FontStyle::BOLD) {
-        "bold"
-    } else {
-        "normal"
-    };
+    if style.contains(FontStyle::ITALIC) {
+        write!(output, "--{name}-font-style:italic;").expect("write to String");
+    }
+    if style.contains(FontStyle::BOLD) {
+        write!(output, "--{name}-font-weight:bold;").expect("write to String");
+    }
     let decoration = decoration(style);
-    write!(
-        output,
-        "--{name}-font-style:{font_style};--{name}-font-weight:{font_weight};--{name}-text-decoration:{decoration};"
-    )
-    .expect("write to String");
+    if decoration != "none" {
+        write!(output, "--{name}-text-decoration:{decoration};")
+            .expect("write to String");
+    }
 }
 
 fn write_font_style(output: &mut String, style: FontStyle, prefix: &str) {

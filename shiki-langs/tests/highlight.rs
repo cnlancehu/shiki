@@ -201,6 +201,115 @@ fn renders_multiple_themes_as_css_variables() {
 }
 
 #[test]
+fn renders_compact_multi_theme_html() {
+    const GRAMMAR: &str = r#"{
+        "scopeName": "source.runtime",
+        "patterns": [
+            { "match": "\\bhello\\b", "name": "keyword.runtime" },
+            { "match": " comment", "name": "comment.content.runtime" },
+            { "match": " +", "name": "whitespace.runtime" },
+            { "match": "//", "name": "comment.punctuation.runtime" },
+            { "match": "\"", "name": "string.punctuation.runtime" },
+            { "match": "\\bobject\\b", "name": "string.content.runtime" }
+        ]
+    }"#;
+    const LIGHT: &str = r##"{
+        "name": "light",
+        "settings": [
+            { "settings": { "foreground": "#7C7F93", "background": "#EFF1F5" } },
+            { "scope": "keyword.runtime", "settings": { "foreground": "#DF8E1D", "fontStyle": "italic" } },
+            { "scope": "comment.punctuation.runtime, comment.content.runtime", "settings": { "foreground": "#7C7F93", "fontStyle": "italic" } },
+            { "scope": "string.punctuation.runtime, string.content.runtime", "settings": { "foreground": "#40A02B" } }
+        ]
+    }"##;
+    const DARK: &str = r##"{
+        "name": "dark",
+        "settings": [
+            { "settings": { "foreground": "#9399B2", "background": "#1E1E2E" } },
+            { "scope": "keyword.runtime", "settings": { "foreground": "#F9E2AF", "fontStyle": "italic" } },
+            { "scope": "comment.punctuation.runtime, comment.content.runtime", "settings": { "foreground": "#9399B2", "fontStyle": "italic" } },
+            { "scope": "string.punctuation.runtime, string.content.runtime", "settings": { "foreground": "#A6E3A1" } }
+        ]
+    }"##;
+
+    let mut highlighter = Highlighter::builder()
+        .json_language("runtime", GRAMMAR)
+        .unwrap()
+        .json_theme("light", LIGHT)
+        .unwrap()
+        .json_theme("dark", DARK)
+        .unwrap()
+        .build()
+        .unwrap();
+    let html = highlighter
+        .code_to_html_with_options(
+            "hello world",
+            "runtime",
+            &HtmlOptions::default()
+                .variables_only()
+                .without_line_wrapper(),
+        )
+        .unwrap();
+
+    assert!(
+        html.contains(
+            "--light:#DF8E1D;--light-font-style:italic;--dark:#F9E2AF;--dark-font-style:italic;"
+        ),
+        "{html}"
+    );
+    assert!(html.contains("--light:#7C7F93;--dark:#9399B2;"), "{html}");
+    assert!(!html.contains("-font-style:normal"), "{html}");
+    assert!(!html.contains("-font-weight:normal"), "{html}");
+    assert!(!html.contains("-text-decoration:none"), "{html}");
+
+    let italic = highlighter
+        .code_to_html_with_options(
+            "hello",
+            "runtime",
+            &HtmlOptions::default().without_line_wrapper(),
+        )
+        .unwrap();
+    assert!(
+        italic.contains("font-style:var(--light-font-style);"),
+        "{italic}"
+    );
+    let plain = highlighter
+        .code_to_html_with_options(
+            "world",
+            "runtime",
+            &HtmlOptions::default().without_line_wrapper(),
+        )
+        .unwrap();
+    assert!(!plain.contains("-font-style:"), "{plain}");
+    assert!(!plain.contains("font-style:var("), "{plain}");
+
+    let options = HtmlOptions::default()
+        .variables_only()
+        .without_line_wrapper();
+    let comment = highlighter
+        .code_to_html_with_options("        // comment", "runtime", &options)
+        .unwrap();
+    assert_eq!(comment.matches("<span style=").count(), 1, "{comment}");
+    assert!(
+        comment.contains(
+            "<code>        <span style=\"--light:#7C7F93;--light-font-style:italic;--dark:#9399B2;--dark-font-style:italic;\">// comment</span></code>"
+        ),
+        "{comment}"
+    );
+
+    let string = highlighter
+        .code_to_html_with_options("\"object\"", "runtime", &options)
+        .unwrap();
+    assert_eq!(string.matches("<span style=").count(), 1, "{string}");
+    assert!(
+        string.contains(
+            "<span style=\"--light:#40A02B;--dark:#A6E3A1;\">\"object\"</span>"
+        ),
+        "{string}"
+    );
+}
+
+#[test]
 fn renderer_trait_supports_custom_outputs() {
     struct ScopeCount;
 
