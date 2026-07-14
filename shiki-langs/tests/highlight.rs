@@ -19,6 +19,7 @@ fn highlights_rust_to_html() {
     assert!(html.contains("main"));
     assert!(html.contains("hello"), "{html}");
     assert!(html.contains("color:"));
+    assert!(html.starts_with("<pre class=\"shiki default\""), "{html}");
 }
 
 #[test]
@@ -177,27 +178,145 @@ fn renders_multiple_themes_as_css_variables() {
         .unwrap();
     assert_eq!(tokens[0][0].styles.len(), 2);
 
+    let mut options = HtmlOptions::default();
+    options.default_theme = Some("light".into());
+    options.pre_classes.push("code-block".into());
+    options.code_classes.push("language-rust".into());
+    options
+        .pre_attributes
+        .insert("data-language".into(), "rust".into());
+    options.include_line_wrapper = false;
     let html = highlighter
-        .code_to_html_with_options(
-            r#"object.get("name")"#,
-            "rust",
-            &HtmlOptions::default()
-                .default_theme("light")
-                .pre_class("code-block")
-                .code_class("language-rust")
-                .pre_attribute("data-language", "rust")
-                .without_line_wrapper(),
-        )
+        .code_to_html_with_options(r#"object.get("name")"#, "rust", &options)
         .unwrap();
 
-    assert!(!html.contains("data-themes="), "{html}");
+    assert!(html.contains("data-themes=\"dark light\""), "{html}");
     assert!(html.contains("--dark:#a6e3a1"), "{html}");
     assert!(html.contains("--light:#40a02b"), "{html}");
     assert!(html.contains("color:var(--light)"), "{html}");
-    assert!(html.contains("class=\"code-block\""), "{html}");
+    assert!(html.contains("class=\"shiki code-block\""), "{html}");
     assert!(html.contains("class=\"language-rust\""), "{html}");
     assert!(html.contains("data-language=\"rust\""), "{html}");
     assert!(!html.contains("class=\"line\""), "{html}");
+}
+
+#[test]
+fn html_options_support_clean_and_lazy_static_configurations() {
+    let clean_options = HtmlOptions::clean();
+
+    let mut plain_options = HtmlOptions::new();
+    plain_options.include_shiki_class = false;
+    plain_options.include_theme_class = false;
+    plain_options.include_data_themes = false;
+    plain_options.include_root_style = false;
+    plain_options.include_token_styles = false;
+    plain_options.include_line_wrapper = false;
+
+    let mut classless_line_options = HtmlOptions::clean();
+    classless_line_options.line_class = None;
+    classless_line_options.include_token_styles = false;
+
+    static STATIC: std::sync::LazyLock<HtmlOptions> =
+        std::sync::LazyLock::new(|| {
+            let mut options = HtmlOptions::clean();
+            options.pre_classes.push("static-pre".into());
+            options.code_classes.push("static-code".into());
+            options
+                .pre_attributes
+                .insert("data-owner".into(), "static".into());
+            options
+                .pre_attributes
+                .insert("style".into(), "border:0".into());
+            options
+                .code_attributes
+                .insert("aria-label".into(), "source".into());
+            options.default_theme = Some("light".into());
+            options.include_data_themes = true;
+            options.include_line_wrapper = false;
+            options
+        });
+
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .themes([
+            ("dark", &shiki_themes::CATPPUCCIN_MOCHA),
+            ("light", &shiki_themes::CATPPUCCIN_LATTE),
+        ])
+        .build()
+        .unwrap();
+
+    let clean = highlighter
+        .code_to_html_with_options("let value = 1;", "rust", &clean_options)
+        .unwrap();
+    assert!(
+        clean.starts_with("<pre><code><span class=\"line\">"),
+        "{clean}"
+    );
+    assert!(!clean.contains("data-themes="), "{clean}");
+    assert!(!clean.starts_with("<pre class="), "{clean}");
+    assert!(!clean.starts_with("<pre style="), "{clean}");
+    assert!(clean.contains("<span style="), "{clean}");
+
+    let plain = highlighter
+        .code_to_html_with_options("let value = 1;", "rust", &plain_options)
+        .unwrap();
+    assert_eq!(plain, "<pre><code>let value = 1;</code></pre>");
+
+    let classless_line = highlighter
+        .code_to_html_with_options(
+            "let value = 1;",
+            "rust",
+            &classless_line_options,
+        )
+        .unwrap();
+    assert_eq!(
+        classless_line,
+        "<pre><code><span>let value = 1;</span></code></pre>"
+    );
+
+    let static_html = highlighter
+        .code_to_html_with_options("let value = 1;", "rust", &STATIC)
+        .unwrap();
+    assert!(
+        static_html.starts_with(
+            "<pre class=\"static-pre\" data-owner=\"static\" data-themes=\"dark light\" style=\"border:0\"><code class=\"static-code\" aria-label=\"source\">"
+        ),
+        "{static_html}"
+    );
+    assert!(!static_html.contains("class=\"line\""), "{static_html}");
+    assert!(static_html.contains("color:var(--light)"), "{static_html}");
+}
+
+#[test]
+fn html_root_style_switches_are_independent() {
+    let mut options = HtmlOptions::clean();
+    options.include_root_style = true;
+    options.include_theme_variables = false;
+    options.include_background = true;
+    options.include_foreground = true;
+    options.include_line_wrapper = false;
+
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .themes([
+            ("dark", &shiki_themes::CATPPUCCIN_MOCHA),
+            ("light", &shiki_themes::CATPPUCCIN_LATTE),
+        ])
+        .build()
+        .unwrap();
+    let html = highlighter
+        .code_to_html_with_options("let value = 1;", "rust", &options)
+        .unwrap();
+
+    assert!(
+        html.starts_with(
+            "<pre style=\"background-color:#1e1e2e;color:#cdd6f4;\"><code>"
+        ),
+        "{html}"
+    );
+    assert!(!html.starts_with("<pre style=\"--dark:"), "{html}");
 }
 
 #[test]
@@ -241,14 +360,11 @@ fn renders_compact_multi_theme_html() {
         .unwrap()
         .build()
         .unwrap();
+    let mut options = HtmlOptions::default();
+    options.include_default_theme_styles = false;
+    options.include_line_wrapper = false;
     let html = highlighter
-        .code_to_html_with_options(
-            "hello world",
-            "runtime",
-            &HtmlOptions::default()
-                .variables_only()
-                .without_line_wrapper(),
-        )
+        .code_to_html_with_options("hello world", "runtime", &options)
         .unwrap();
 
     assert!(
@@ -262,30 +378,21 @@ fn renders_compact_multi_theme_html() {
     assert!(!html.contains("-font-weight:normal"), "{html}");
     assert!(!html.contains("-text-decoration:none"), "{html}");
 
+    let mut default_options = HtmlOptions::default();
+    default_options.include_line_wrapper = false;
     let italic = highlighter
-        .code_to_html_with_options(
-            "hello",
-            "runtime",
-            &HtmlOptions::default().without_line_wrapper(),
-        )
+        .code_to_html_with_options("hello", "runtime", &default_options)
         .unwrap();
     assert!(
         italic.contains("font-style:var(--light-font-style);"),
         "{italic}"
     );
     let plain = highlighter
-        .code_to_html_with_options(
-            "world",
-            "runtime",
-            &HtmlOptions::default().without_line_wrapper(),
-        )
+        .code_to_html_with_options("world", "runtime", &default_options)
         .unwrap();
     assert!(!plain.contains("-font-style:"), "{plain}");
     assert!(!plain.contains("font-style:var("), "{plain}");
 
-    let options = HtmlOptions::default()
-        .variables_only()
-        .without_line_wrapper();
     let comment = highlighter
         .code_to_html_with_options("        // comment", "runtime", &options)
         .unwrap();

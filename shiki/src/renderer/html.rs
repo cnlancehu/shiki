@@ -11,80 +11,85 @@ use crate::{
 pub struct HtmlOptions {
     pub pre_classes: Vec<String>,
     pub code_classes: Vec<String>,
+    /// Wraps each source line in a `<span>`.
+    pub include_line_wrapper: bool,
+    /// Adds a class to line wrappers when configured.
     pub line_class: Option<String>,
     pub pre_attributes: BTreeMap<String, String>,
     pub code_attributes: BTreeMap<String, String>,
     pub default_theme: Option<String>,
-    pub include_background: bool,
-    pub include_foreground: bool,
+    /// Adds the conventional `shiki` class to `<pre>`.
+    pub include_shiki_class: bool,
+    /// Adds the active theme name as a `<pre>` class for a single theme.
     pub include_theme_class: bool,
+    /// Adds `data-themes` to `<pre>` when multiple themes are configured.
+    pub include_data_themes: bool,
+    /// Adds per-theme foreground/background CSS variables to `<pre style>`.
+    pub include_theme_variables: bool,
+    /// Enables automatically generated declarations in `<pre style>`.
+    pub include_root_style: bool,
+    /// Adds the active theme background to `<pre style>`.
+    pub include_background: bool,
+    /// Adds the active theme foreground to `<pre style>`.
+    pub include_foreground: bool,
+    /// Adds concrete default-theme properties alongside multi-theme variables.
     pub include_default_theme_styles: bool,
+    /// Adds styled token spans. When disabled, only escaped source is emitted.
+    pub include_token_styles: bool,
 }
 
 impl Default for HtmlOptions {
     fn default() -> Self {
-        Self {
-            pre_classes: vec!["shiki".to_owned()],
-            code_classes: Vec::new(),
-            line_class: Some("line".to_owned()),
-            pre_attributes: BTreeMap::new(),
-            code_attributes: BTreeMap::new(),
-            default_theme: None,
-            include_background: true,
-            include_foreground: true,
-            include_theme_class: true,
-            include_default_theme_styles: true,
-        }
+        Self::new()
     }
 }
 
 impl HtmlOptions {
-    pub fn pre_class(mut self, class: impl Into<String>) -> Self {
-        self.pre_classes.push(class.into());
-        self
+    /// Returns the Shiki-compatible default HTML configuration.
+    pub const fn new() -> Self {
+        Self {
+            pre_classes: Vec::new(),
+            code_classes: Vec::new(),
+            include_line_wrapper: true,
+            line_class: None,
+            pre_attributes: BTreeMap::new(),
+            code_attributes: BTreeMap::new(),
+            default_theme: None,
+            include_shiki_class: true,
+            include_theme_class: true,
+            include_data_themes: true,
+            include_theme_variables: true,
+            include_root_style: true,
+            include_background: true,
+            include_foreground: true,
+            include_default_theme_styles: true,
+            include_token_styles: true,
+        }
     }
 
-    pub fn code_class(mut self, class: impl Into<String>) -> Self {
-        self.code_classes.push(class.into());
-        self
-    }
-
-    pub fn line_class(mut self, class: impl Into<String>) -> Self {
-        self.line_class = Some(class.into());
-        self
-    }
-
-    pub fn without_line_wrapper(mut self) -> Self {
-        self.line_class = None;
-        self
-    }
-
-    pub fn pre_attribute(
-        mut self,
-        name: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Self {
-        self.pre_attributes.insert(name.into(), value.into());
-        self
-    }
-
-    pub fn code_attribute(
-        mut self,
-        name: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Self {
-        self.code_attributes.insert(name.into(), value.into());
-        self
-    }
-
-    pub fn default_theme(mut self, name: impl Into<String>) -> Self {
-        self.default_theme = Some(name.into());
-        self
-    }
-
-    pub fn variables_only(mut self) -> Self {
-        self.include_default_theme_styles = false;
-        self
+    /// Returns a minimal wrapper configuration.
+    ///
+    /// It adds no `<pre>`/`<code>` classes, attributes, or root theme styles.
+    /// The `line` wrapper class and token styles remain enabled.
+    pub fn clean() -> Self {
+        Self {
+            pre_classes: Vec::new(),
+            code_classes: Vec::new(),
+            include_line_wrapper: true,
+            line_class: Some("line".to_owned()),
+            pre_attributes: BTreeMap::new(),
+            code_attributes: BTreeMap::new(),
+            default_theme: None,
+            include_shiki_class: false,
+            include_theme_class: false,
+            include_data_themes: false,
+            include_theme_variables: false,
+            include_root_style: false,
+            include_background: false,
+            include_foreground: false,
+            include_default_theme_styles: true,
+            include_token_styles: true,
+        }
     }
 }
 
@@ -135,51 +140,67 @@ fn render_html(
     let default = &highlighter.engine.inner.themes[default_index];
     let multiple = highlighter.engine.inner.themes.len() > 1;
 
-    let mut pre_classes = options.pre_classes.clone();
-    if options.include_theme_class && !multiple {
-        pre_classes.push(default.theme.name.to_string());
-    }
-    let mut pre_attributes = options.pre_attributes.clone();
-    if multiple {
-        pre_attributes.insert(
-            "data-themes".to_owned(),
-            highlighter
-                .engine
-                .inner
-                .themes
-                .iter()
-                .map(|theme| theme.name.as_str())
-                .collect::<Vec<_>>()
-                .join(" "),
-        );
-    }
+    let theme_class = (options.include_theme_class && !multiple)
+        .then_some(default.css_name.as_str());
+    let shiki_class = options.include_shiki_class.then_some("shiki");
+    let data_themes = (options.include_data_themes && multiple).then(|| {
+        highlighter
+            .engine
+            .inner
+            .themes
+            .iter()
+            .map(|theme| theme.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
+    let automatic_pre_attributes =
+        data_themes.as_deref().map(|value| [("data-themes", value)]);
+    let automatic_pre_attributes = automatic_pre_attributes
+        .as_ref()
+        .map_or(&[][..], <[_; 1]>::as_slice);
 
     let mut root_style = String::new();
-    if multiple {
-        for theme in &highlighter.engine.inner.themes {
-            write!(
-                root_style,
-                "--{}:{};--{}-bg:{};",
-                theme.css_name,
-                theme.theme.foreground,
-                theme.css_name,
-                theme.theme.background
-            )
-            .expect("write to String");
+    if options.include_root_style && multiple {
+        if options.include_theme_variables {
+            for theme in &highlighter.engine.inner.themes {
+                write!(
+                    root_style,
+                    "--{}:{};--{}-bg:{};",
+                    theme.css_name,
+                    theme.theme.foreground,
+                    theme.css_name,
+                    theme.theme.background
+                )
+                .expect("write to String");
+            }
         }
         if options.include_background {
-            write!(
-                root_style,
-                "background-color:var(--{}-bg);",
-                default.css_name
-            )
-            .expect("write to String");
+            if options.include_theme_variables {
+                write!(
+                    root_style,
+                    "background-color:var(--{}-bg);",
+                    default.css_name
+                )
+                .expect("write to String");
+            } else {
+                write!(
+                    root_style,
+                    "background-color:{};",
+                    default.theme.background
+                )
+                .expect("write to String");
+            }
         }
         if options.include_foreground {
-            write!(root_style, "color:var(--{});", default.css_name)
-                .expect("write to String");
+            if options.include_theme_variables {
+                write!(root_style, "color:var(--{});", default.css_name)
+                    .expect("write to String");
+            } else {
+                write!(root_style, "color:{};", default.theme.foreground)
+                    .expect("write to String");
+            }
         }
-    } else {
+    } else if options.include_root_style {
         if options.include_background {
             write!(
                 root_style,
@@ -198,15 +219,20 @@ fn render_html(
     open_tag(
         &mut output,
         "pre",
-        &pre_classes,
-        &pre_attributes,
+        shiki_class
+            .into_iter()
+            .chain(options.pre_classes.iter().map(String::as_str))
+            .chain(theme_class),
+        &options.pre_attributes,
+        automatic_pre_attributes,
         Some(&root_style),
     );
     open_tag(
         &mut output,
         "code",
-        &options.code_classes,
+        options.code_classes.iter().map(String::as_str),
         &options.code_attributes,
+        &[],
         None,
     );
     let themes = &highlighter.engine.inner.themes;
@@ -224,12 +250,13 @@ fn render_html(
         if line_index > 0 {
             output.push('\n');
         }
-        if let Some(line_class) = &options.line_class {
+        if options.include_line_wrapper {
             open_tag(
                 &mut output,
                 "span",
-                std::slice::from_ref(line_class),
+                options.line_class.as_deref(),
                 &BTreeMap::new(),
+                &[],
                 None,
             );
         }
@@ -253,7 +280,7 @@ fn render_html(
                     themes,
                     default_index,
                     multiple,
-                    options.include_default_theme_styles,
+                    options,
                 );
             }
             run_start = token.range.start;
@@ -269,10 +296,10 @@ fn render_html(
                 themes,
                 default_index,
                 multiple,
-                options.include_default_theme_styles,
+                options,
             );
         }
-        if options.line_class.is_some() {
+        if options.include_line_wrapper {
             output.push_str("</span>");
         }
     }
@@ -310,8 +337,12 @@ fn write_token_run(
     themes: &[NamedTheme],
     default_index: usize,
     multiple: bool,
-    include_default_theme_styles: bool,
+    options: &HtmlOptions,
 ) {
+    if !options.include_token_styles {
+        push_escaped_html(output, content);
+        return;
+    }
     let unstyled_whitespace = content.chars().all(char::is_whitespace)
         && styles.iter().all(|style| {
             style.background.is_none()
@@ -328,7 +359,7 @@ fn write_token_run(
         themes,
         default_index,
         multiple,
-        include_default_theme_styles,
+        options.include_default_theme_styles,
     );
     output.push_str("\">");
     push_escaped_html(output, content);
@@ -449,34 +480,58 @@ fn decoration(style: FontStyle) -> &'static str {
     }
 }
 
-fn open_tag(
+fn open_tag<'a>(
     output: &mut String,
     tag: &str,
-    classes: &[String],
+    classes: impl IntoIterator<Item = &'a str>,
     attributes: &BTreeMap<String, String>,
+    automatic_attributes: &[(&str, &str)],
     style: Option<&str>,
 ) {
     write!(output, "<{tag}").expect("write to String");
-    if !classes.is_empty() {
+    let mut classes = classes.into_iter().filter(|class| !class.is_empty());
+    if let Some(first) = classes.next() {
         output.push_str(" class=\"");
-        for (index, class) in classes.iter().enumerate() {
-            if index > 0 {
-                output.push(' ');
-            }
+        push_escaped_attr(output, first);
+        for class in classes {
+            output.push(' ');
             push_escaped_attr(output, class);
         }
         output.push('"');
     }
-    for (name, value) in attributes {
+    for (name, value) in attributes.iter() {
+        if name != "style"
+            && !automatic_attributes
+                .iter()
+                .any(|(automatic, _)| *automatic == name)
+            && valid_attribute_name(name)
+        {
+            write!(output, " {name}=\"").expect("write to String");
+            push_escaped_attr(output, value);
+            output.push('"');
+        }
+    }
+    for (name, value) in automatic_attributes {
         if valid_attribute_name(name) {
             write!(output, " {name}=\"").expect("write to String");
             push_escaped_attr(output, value);
             output.push('"');
         }
     }
-    if let Some(style) = style.filter(|style| !style.is_empty()) {
+    let custom_style =
+        attributes.get("style").filter(|style| !style.is_empty());
+    let automatic_style = style.filter(|style| !style.is_empty());
+    if custom_style.is_some() || automatic_style.is_some() {
         output.push_str(" style=\"");
-        push_escaped_attr(output, style);
+        if let Some(style) = custom_style {
+            push_escaped_attr(output, style);
+            if automatic_style.is_some() && !style.ends_with(';') {
+                output.push(';');
+            }
+        }
+        if let Some(style) = automatic_style {
+            push_escaped_attr(output, style);
+        }
         output.push('"');
     }
     output.push('>');

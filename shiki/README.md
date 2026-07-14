@@ -81,17 +81,21 @@ inspection needs them. `cache_stats`, `clear_language_cache`, and
 
 ## HTML rendering
 
-`HtmlOptions` controls classes, attributes, line wrappers, root colors, default
-theme selection, and variable-only output.
+`HtmlOptions` independently controls explicit classes and attributes, automatic
+`shiki`/theme classes, `data-themes`, line wrappers, root theme variables,
+foreground/background styles, default theme selection, token spans, and
+variable-only output.
 
 ```rust,ignore
-let options = shiki::HtmlOptions::default()
-    .default_theme("light")
-    .pre_class("code-block")
-    .code_class("language-rust")
-    .pre_attribute("data-language", "rust")
-    .without_line_wrapper()
-    .variables_only();
+let mut options = shiki::HtmlOptions::default();
+options.default_theme = Some("light".into());
+options.pre_classes.push("code-block".into());
+options.code_classes.push("language-rust".into());
+options
+    .pre_attributes
+    .insert("data-language".into(), "rust".into());
+options.include_line_wrapper = false;
+options.include_default_theme_styles = false;
 
 let html = highlighter.code_to_html_with_options(
     "let value = 1;",
@@ -99,6 +103,32 @@ let html = highlighter.code_to_html_with_options(
     &options,
 )?;
 ```
+
+Use `HtmlOptions::clean()` for a `<pre><code>…</code></pre>` wrapper with no
+automatic wrapper attributes or root styles. It retains the `line` class and
+syntax-highlighted token styles.
+
+Custom options own their `Vec<String>` and `BTreeMap<String, String>` values.
+Use `LazyLock` to create one shared global configuration:
+
+```rust,ignore
+use std::sync::LazyLock;
+
+static HTML: LazyLock<shiki::HtmlOptions> = LazyLock::new(|| {
+    let mut options = shiki::HtmlOptions::clean();
+    options.pre_classes.push("code-block".into());
+    options
+        .code_attributes
+        .insert("aria-label".into(), "source".into());
+    options.include_data_themes = true;
+    options.include_line_wrapper = false;
+    options
+});
+```
+
+Classes, attributes, `line_class`, and `default_theme` are public fields. Set
+`line_class` to `None` to keep a classless line wrapper, or set
+`include_line_wrapper` to `false` to remove the wrapper itself.
 
 With multiple themes, token colors are emitted as CSS custom properties. Font
 and background variables are emitted only when required. Adjacent tokens with

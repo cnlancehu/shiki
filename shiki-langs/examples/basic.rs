@@ -12,7 +12,10 @@ fn main() -> shiki::Result<()> {
     let code = r#"fn main() {
     println!("Hello from Rust");
 }"#;
-    let options = HtmlOptions::default().pre_attribute("data-language", "rust");
+    let mut options = HtmlOptions::default();
+    options
+        .pre_attributes
+        .insert("data-language".into(), "rust".into());
     let html = highlighter.code_to_html_with_options(code, "rust", &options)?;
 
     println!("{html}");

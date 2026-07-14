@@ -121,21 +121,26 @@ whitespace when doing so has no visual effect.
 
 `HtmlOptions` controls:
 
-- `<pre>` and `<code>` classes and attributes;
+- explicit `<pre>` and `<code>` classes and attributes;
+- the automatic `shiki` class, single-theme class, and multi-theme
+  `data-themes` attribute independently;
 - line wrappers and their class;
 - the default theme used for inline fallback declarations;
-- root foreground and background output;
-- theme class and `data-themes` output;
+- the root `style` attribute, theme variables, foreground, and background
+  independently;
+- whether styled token spans are emitted;
 - variable-only token styles for application-managed theme switching.
 
 ```rust
-let options = shiki::HtmlOptions::default()
-    .default_theme("light")
-    .pre_class("code-block")
-    .code_class("language-rust")
-    .pre_attribute("data-language", "rust")
-    .without_line_wrapper()
-    .variables_only();
+let mut options = shiki::HtmlOptions::default();
+options.default_theme = Some("light".into());
+options.pre_classes.push("code-block".into());
+options.code_classes.push("language-rust".into());
+options
+    .pre_attributes
+    .insert("data-language".into(), "rust".into());
+options.include_line_wrapper = false;
+options.include_default_theme_styles = false;
 
 let html = highlighter.code_to_html_with_options(
     "let value = 1;",
@@ -143,6 +148,36 @@ let html = highlighter.code_to_html_with_options(
     &options,
 )?;
 ```
+
+`HtmlOptions::clean()` produces the minimal wrapper configuration: no automatic
+`<pre>`/`<code>` classes, attributes, or root styles, while retaining the
+`line` wrapper and syntax-highlighted token styles.
+
+The options deliberately use standard owned collections. Use `LazyLock` when a
+custom configuration should be initialized once and shared globally:
+
+```rust
+use std::sync::LazyLock;
+
+static HTML: LazyLock<shiki::HtmlOptions> = LazyLock::new(|| {
+    let mut options = shiki::HtmlOptions::clean();
+    options.pre_classes.push("code-block".into());
+    options.code_classes.push("language-rust".into());
+    options
+        .pre_attributes
+        .insert("data-language".into(), "rust".into());
+    options.include_data_themes = true;
+    options.include_line_wrapper = false;
+    options
+});
+```
+
+The automatic-output switches are `include_shiki_class`,
+`include_theme_class`, `include_data_themes`, `include_line_wrapper`,
+`include_root_style`, `include_theme_variables`, `include_background`,
+`include_foreground`, `include_default_theme_styles`, and
+`include_token_styles`. Set `line_class` to `None` to retain the line wrapper
+without its class, or set `include_line_wrapper` to `false` to remove it.
 
 ## Token APIs
 
