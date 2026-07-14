@@ -178,8 +178,10 @@ fn renders_multiple_themes_as_css_variables() {
         .unwrap();
     assert_eq!(tokens[0][0].styles.len(), 2);
 
-    let mut options = HtmlOptions::default();
-    options.default_theme = Some("light".into());
+    let mut options = HtmlOptions {
+        default_theme: Some("light".into()),
+        ..HtmlOptions::default()
+    };
     options.pre_classes.push("code-block".into());
     options.code_classes.push("language-rust".into());
     options
@@ -360,9 +362,11 @@ fn renders_compact_multi_theme_html() {
         .unwrap()
         .build()
         .unwrap();
-    let mut options = HtmlOptions::default();
-    options.include_default_theme_styles = false;
-    options.include_line_wrapper = false;
+    let options = HtmlOptions {
+        include_default_theme_styles: false,
+        include_line_wrapper: false,
+        ..HtmlOptions::default()
+    };
     let html = highlighter
         .code_to_html_with_options("hello world", "runtime", &options)
         .unwrap();
@@ -378,8 +382,10 @@ fn renders_compact_multi_theme_html() {
     assert!(!html.contains("-font-weight:normal"), "{html}");
     assert!(!html.contains("-text-decoration:none"), "{html}");
 
-    let mut default_options = HtmlOptions::default();
-    default_options.include_line_wrapper = false;
+    let default_options = HtmlOptions {
+        include_line_wrapper: false,
+        ..HtmlOptions::default()
+    };
     let italic = highlighter
         .code_to_html_with_options("hello", "runtime", &default_options)
         .unwrap();

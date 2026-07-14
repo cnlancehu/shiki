@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -26,8 +26,47 @@ pub struct NamedTheme {
 }
 
 pub struct CompiledLanguage {
-    pub grammar: Arc<crate::grammar::CompiledGrammar>,
+    grammar: OnceLock<Arc<crate::grammar::CompiledGrammar>>,
+    snapshot: Option<crate::snapshot::GrammarSnapshot>,
     pub grammar_id: u64,
+}
+
+impl CompiledLanguage {
+    fn eager(grammar: crate::grammar::CompiledGrammar) -> Self {
+        Self {
+            grammar: OnceLock::from(Arc::new(grammar)),
+            snapshot: None,
+            grammar_id: NEXT_GRAMMAR_ID.fetch_add(1, Ordering::Relaxed),
+        }
+    }
+
+    fn lazy(snapshot: crate::snapshot::GrammarSnapshot) -> Self {
+        Self {
+            grammar: OnceLock::new(),
+            snapshot: Some(snapshot),
+            grammar_id: NEXT_GRAMMAR_ID.fetch_add(1, Ordering::Relaxed),
+        }
+    }
+
+    pub(crate) fn grammar(&self) -> Arc<crate::grammar::CompiledGrammar> {
+        self.grammar
+            .get_or_init(|| {
+                Arc::new(
+                    self.snapshot
+                        .as_ref()
+                        .expect("compiled language has neither grammar nor snapshot")
+                        .decode()
+                        .unwrap_or_else(|error| {
+                            panic!("invalid shiki grammar snapshot: {error}")
+                        }),
+                )
+            })
+            .clone()
+    }
+
+    fn is_loaded(&self) -> bool {
+        self.grammar.get().is_some()
+    }
 }
 
 pub struct EngineInner {
@@ -401,7 +440,7 @@ impl Highlighter {
             .map(|theme| theme.theme.clone())
             .collect();
         self.tokenizers[index] = Some(Tokenizer::new(
-            compiled.grammar.clone(),
+            compiled.grammar(),
             compiled.grammar_id,
             themes,
             self.engine.inner.regex_limits,
@@ -416,6 +455,18 @@ impl HighlighterEngine {
 
     pub fn language_count(&self) -> usize {
         self.inner.compiled.len()
+    }
+
+    /// Returns the number of grammar IRs currently resident in memory.
+    ///
+    /// Precompiled engines load grammar IR lazily on first use. Engines built
+    /// at runtime already contain all compiled grammar IRs.
+    pub fn loaded_language_count(&self) -> usize {
+        self.inner
+            .compiled
+            .iter()
+            .filter(|language| language.is_loaded())
+            .count()
     }
 
     pub fn theme_names(&self) -> impl Iterator<Item = &str> {
@@ -452,7 +503,7 @@ impl HighlighterEngine {
             .collect();
         Ok(LanguageSession {
             tokenizer: Tokenizer::new(
-                compiled.grammar.clone(),
+                compiled.grammar(),
                 compiled.grammar_id,
                 themes,
                 self.inner.regex_limits,
@@ -467,10 +518,25 @@ impl HighlighterEngine {
 
     #[doc(hidden)]
     pub fn __from_snapshot(source: &[u8]) -> Self {
-        let parts = crate::snapshot::decode(source).unwrap_or_else(|error| {
-            panic!("invalid shiki precompiled snapshot: {error}")
-        });
-        Self::from_owned_parts(
+        let parts =
+            crate::snapshot::decode_owned(source).unwrap_or_else(|error| {
+                panic!("invalid shiki precompiled snapshot: {error}")
+            });
+        Self::from_snapshot_parts(
+            parts.languages,
+            parts.grammars,
+            parts.themes,
+            parts.regex_limits,
+        )
+    }
+
+    #[doc(hidden)]
+    pub fn __from_static_snapshot(source: &'static [u8]) -> Self {
+        let parts =
+            crate::snapshot::decode_static(source).unwrap_or_else(|error| {
+                panic!("invalid shiki precompiled snapshot: {error}")
+            });
+        Self::from_snapshot_parts(
             parts.languages,
             parts.grammars,
             parts.themes,
@@ -507,13 +573,34 @@ impl HighlighterEngine {
         themes: Vec<(String, String, Theme)>,
         regex_limits: RegexLimits,
     ) -> Self {
-        let compiled = grammars
+        let compiled =
+            grammars.into_iter().map(CompiledLanguage::eager).collect();
+        let themes = themes
             .into_iter()
-            .map(|grammar| CompiledLanguage {
-                grammar: Arc::new(grammar),
-                grammar_id: NEXT_GRAMMAR_ID.fetch_add(1, Ordering::Relaxed),
+            .map(|(name, css_name, theme)| NamedTheme {
+                name,
+                css_name,
+                theme: Arc::new(theme),
             })
             .collect();
+        Self {
+            inner: Arc::new(EngineInner {
+                languages: languages.into_iter().collect(),
+                compiled,
+                themes,
+                regex_limits,
+            }),
+        }
+    }
+
+    fn from_snapshot_parts(
+        languages: Vec<(String, usize)>,
+        grammars: Vec<crate::snapshot::GrammarSnapshot>,
+        themes: Vec<(String, String, Theme)>,
+        regex_limits: RegexLimits,
+    ) -> Self {
+        let compiled =
+            grammars.into_iter().map(CompiledLanguage::lazy).collect();
         let themes = themes
             .into_iter()
             .map(|(name, css_name, theme)| NamedTheme {
@@ -749,13 +836,9 @@ impl HighlighterBuilder {
                 },
             ))
         {
-            let grammar =
-                Arc::new(compile(scope_name, &grammars, &injections)?);
+            let grammar = compile(scope_name, &grammars, &injections)?;
             let index = compiled.len();
-            compiled.push(CompiledLanguage {
-                grammar,
-                grammar_id: NEXT_GRAMMAR_ID.fetch_add(1, Ordering::Relaxed),
-            });
+            compiled.push(CompiledLanguage::eager(grammar));
             languages.insert(id.clone(), index);
             languages.insert(scope_name.clone(), index);
             for alias in aliases {

@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt,
+    ops::Range,
+    sync::{Arc, OnceLock},
+};
 
 use crate::{
     grammar::{
@@ -11,11 +16,73 @@ use crate::{
     tokenizer::RegexLimits,
 };
 
-const MAGIC: &[u8; 8] = b"SHIKI\0\x03\0";
+const MAGIC: &[u8; 8] = b"SHIKI\0\x04\0";
+
+#[derive(Clone)]
+enum SnapshotSource {
+    Static(&'static [u8]),
+    Owned(Arc<[u8]>),
+}
+
+impl SnapshotSource {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Static(source) => source,
+            Self::Owned(source) => source,
+        }
+    }
+}
+
+pub(crate) struct GrammarSnapshot {
+    strings: Arc<SnapshotStrings>,
+    range: Range<usize>,
+}
+
+impl GrammarSnapshot {
+    pub(crate) fn decode(&self) -> Result<CompiledGrammar, SnapshotError> {
+        decode_grammar_block(
+            &self.strings.source.as_slice()[self.range.clone()],
+            &self.strings,
+        )
+    }
+}
+
+struct SnapshotStrings {
+    source: SnapshotSource,
+    data_start: usize,
+    offsets: Box<[u32]>,
+    values: Box<[OnceLock<Arc<str>>]>,
+}
+
+impl SnapshotStrings {
+    fn get(&self, index: usize) -> Result<Arc<str>, SnapshotError> {
+        let start = self
+            .offsets
+            .get(index)
+            .ok_or(SnapshotError("snapshot contains an invalid string ID"))?;
+        let end = self
+            .offsets
+            .get(index + 1)
+            .ok_or(SnapshotError("snapshot contains an invalid string ID"))?;
+        let cache = self
+            .values
+            .get(index)
+            .expect("string cache and range table must have equal lengths");
+        if let Some(value) = cache.get() {
+            return Ok(value.clone());
+        }
+        let range =
+            self.data_start + *start as usize..self.data_start + *end as usize;
+        let bytes = &self.source.as_slice()[range];
+        let value = std::str::from_utf8(bytes)
+            .map_err(|_| SnapshotError("snapshot contains invalid UTF-8"))?;
+        Ok(cache.get_or_init(|| Arc::from(value)).clone())
+    }
+}
 
 pub(crate) struct SnapshotParts {
     pub languages: Vec<(String, usize)>,
-    pub grammars: Vec<CompiledGrammar>,
+    pub grammars: Vec<GrammarSnapshot>,
     pub themes: Vec<(String, String, Theme)>,
     pub regex_limits: RegexLimits,
 }
@@ -32,67 +99,64 @@ impl fmt::Display for SnapshotError {
 pub(crate) fn encode(engine: &HighlighterEngine) -> Vec<u8> {
     let mut strings = StringTable::default();
     collect_strings(engine, &mut strings);
-
     let mut writer = Writer::with_capacity(strings.encoded_len());
     writer.bytes(MAGIC);
-    writer.len(strings.values.len());
-    for value in &strings.values {
-        writer.len(value.len());
-        writer.bytes(value.as_bytes());
-    }
 
     let mut languages = engine.inner.languages.iter().collect::<Vec<_>>();
     languages.sort_unstable_by(|left, right| left.0.cmp(right.0));
     writer.len(languages.len());
     for (name, index) in languages {
-        writer.string(&strings, name);
+        writer.text(name);
         writer.index(*index);
     }
 
+    writer.snapshot_strings(&strings);
+
     writer.len(engine.inner.compiled.len());
     for language in &engine.inner.compiled {
-        writer.grammar(&strings, &language.grammar);
+        writer
+            .sized_bytes(&encode_grammar_block(&language.grammar(), &strings));
     }
 
-    writer.len(engine.inner.themes.len());
-    for named in &engine.inner.themes {
-        writer.string(&strings, &named.name);
-        writer.string(&strings, &named.css_name);
-        writer.theme(&strings, &named.theme);
-    }
+    writer.sized_bytes(&encode_theme_block(engine, &strings));
 
     writer.u64(engine.inner.regex_limits.match_retry_limit);
     writer.u64(engine.inner.regex_limits.search_retry_limit);
-    lz4_flex::block::compress_prepend_size(&writer.output)
+    writer.output
 }
 
-pub(crate) fn decode(source: &[u8]) -> Result<SnapshotParts, SnapshotError> {
-    let uncompressed = lz4_flex::block::decompress_size_prepended(source)
-        .map_err(|_| SnapshotError("precompiled snapshot is not valid LZ4"))?;
-    let mut reader = Reader::new(&uncompressed);
+pub(crate) fn decode_static(
+    source: &'static [u8],
+) -> Result<SnapshotParts, SnapshotError> {
+    decode(SnapshotSource::Static(source))
+}
+
+pub(crate) fn decode_owned(
+    source: &[u8],
+) -> Result<SnapshotParts, SnapshotError> {
+    decode(SnapshotSource::Owned(Arc::from(source)))
+}
+
+fn decode(source: SnapshotSource) -> Result<SnapshotParts, SnapshotError> {
+    let bytes = source.as_slice();
+    let mut reader = Reader::new(bytes);
     if reader.take(MAGIC.len())? != MAGIC {
         return Err(SnapshotError("unsupported precompiled snapshot format"));
     }
 
-    let strings = reader.vec(|reader| {
-        let bytes = reader.sized_bytes()?;
-        let value = std::str::from_utf8(bytes)
-            .map_err(|_| SnapshotError("snapshot contains invalid UTF-8"))?;
-        Ok(Arc::<str>::from(value))
-    })?;
-
     let languages = reader.vec(|reader| {
-        let name = reader.string(&strings)?.as_ref().to_owned();
+        let name = reader.text()?.to_owned();
         let index = reader.index()?;
         Ok((name, index))
     })?;
-    let grammars = reader.vec(|reader| reader.grammar(&strings))?;
-    let themes = reader.vec(|reader| {
-        let name = reader.string(&strings)?.as_ref().to_owned();
-        let css_name = reader.string(&strings)?.as_ref().to_owned();
-        let theme = reader.theme(&strings)?;
-        Ok((name, css_name, theme))
+    let strings = decode_strings(&mut reader, source.clone(), bytes.len())?;
+    let grammar_ranges = reader.vec(|reader| {
+        let len = reader.index()?;
+        let start = bytes.len() - reader.remaining.len();
+        reader.take(len)?;
+        Ok(start..start + len)
     })?;
+    let themes = decode_theme_block(reader.sized_bytes()?, &strings)?;
     let regex_limits = RegexLimits {
         match_retry_limit: reader.u64()?,
         search_retry_limit: reader.u64()?,
@@ -100,11 +164,21 @@ pub(crate) fn decode(source: &[u8]) -> Result<SnapshotParts, SnapshotError> {
     if !reader.remaining.is_empty() {
         return Err(SnapshotError("snapshot contains trailing data"));
     }
-    if languages.iter().any(|(_, index)| *index >= grammars.len()) {
+    if languages
+        .iter()
+        .any(|(_, index)| *index >= grammar_ranges.len())
+    {
         return Err(SnapshotError(
             "snapshot contains an invalid language index",
         ));
     }
+    let grammars = grammar_ranges
+        .into_iter()
+        .map(|range| GrammarSnapshot {
+            strings: strings.clone(),
+            range,
+        })
+        .collect();
 
     Ok(SnapshotParts {
         languages,
@@ -112,6 +186,98 @@ pub(crate) fn decode(source: &[u8]) -> Result<SnapshotParts, SnapshotError> {
         themes,
         regex_limits,
     })
+}
+
+fn decode_strings(
+    reader: &mut Reader<'_>,
+    source: SnapshotSource,
+    source_len: usize,
+) -> Result<Arc<SnapshotStrings>, SnapshotError> {
+    let count = reader.index()?;
+    let mut offsets = Vec::new();
+    offsets
+        .try_reserve_exact(count.saturating_add(1))
+        .map_err(|_| SnapshotError("snapshot string table is too large"))?;
+    offsets.push(0);
+    let mut total = 0_usize;
+    for _ in 0..count {
+        let len = reader.index()?;
+        total = total
+            .checked_add(len)
+            .ok_or(SnapshotError("snapshot string table is too large"))?;
+        offsets.push(total.try_into().map_err(|_| {
+            SnapshotError("snapshot string table is too large")
+        })?);
+    }
+    let start = source_len - reader.remaining.len();
+    reader.take(total)?;
+
+    let values = (0..count)
+        .map(|_| OnceLock::new())
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    Ok(Arc::new(SnapshotStrings {
+        source,
+        data_start: start,
+        offsets: offsets.into_boxed_slice(),
+        values,
+    }))
+}
+
+fn encode_grammar_block(
+    grammar: &CompiledGrammar,
+    strings: &StringTable,
+) -> Vec<u8> {
+    let mut writer = Writer::with_capacity(grammar.rules.len());
+    writer.grammar(strings, grammar);
+    lz4_flex::block::compress_prepend_size(&writer.output)
+}
+
+fn decode_grammar_block(
+    source: &[u8],
+    strings: &SnapshotStrings,
+) -> Result<CompiledGrammar, SnapshotError> {
+    let uncompressed = lz4_flex::block::decompress_size_prepended(source)
+        .map_err(|_| SnapshotError("grammar snapshot is not valid LZ4"))?;
+    let mut reader = Reader::new(&uncompressed);
+    let grammar = reader.grammar(strings)?;
+    if !reader.remaining.is_empty() {
+        return Err(SnapshotError("grammar snapshot contains trailing data"));
+    }
+    Ok(grammar)
+}
+
+fn encode_theme_block(
+    engine: &HighlighterEngine,
+    strings: &StringTable,
+) -> Vec<u8> {
+    let mut writer = Writer::with_capacity(engine.inner.themes.len());
+    writer.len(engine.inner.themes.len());
+    for named in &engine.inner.themes {
+        writer.string(strings, &named.name);
+        writer.string(strings, &named.css_name);
+        writer.theme(strings, &named.theme);
+    }
+    lz4_flex::block::compress_prepend_size(&writer.output)
+}
+
+fn decode_theme_block(
+    source: &[u8],
+    strings: &SnapshotStrings,
+) -> Result<Vec<(String, String, Theme)>, SnapshotError> {
+    let uncompressed = lz4_flex::block::decompress_size_prepended(source)
+        .map_err(|_| SnapshotError("theme snapshot is not valid LZ4"))?;
+    let mut reader = Reader::new(&uncompressed);
+    let themes = reader.vec(|reader| {
+        let name = reader.string(strings)?.as_ref().to_owned();
+        let css_name = reader.string(strings)?.as_ref().to_owned();
+        let theme = reader.theme(strings)?;
+        Ok((name, css_name, theme))
+    })?;
+    if !reader.remaining.is_empty() {
+        return Err(SnapshotError("theme snapshot contains trailing data"));
+    }
+    Ok(themes)
 }
 
 #[derive(Default)]
@@ -140,23 +306,14 @@ impl StringTable {
 
     fn encoded_len(&self) -> usize {
         MAGIC.len()
-            + 4
-            + self
-                .values
-                .iter()
-                .map(|value| 4 + value.len())
-                .sum::<usize>()
+            + self.values.len() * 4
+            + self.values.iter().map(|value| value.len()).sum::<usize>()
     }
 }
 
 fn collect_strings(engine: &HighlighterEngine, strings: &mut StringTable) {
-    let mut language_names = engine.inner.languages.keys().collect::<Vec<_>>();
-    language_names.sort_unstable();
-    for name in language_names {
-        strings.intern(name);
-    }
     for language in &engine.inner.compiled {
-        collect_grammar_strings(&language.grammar, strings);
+        collect_grammar_strings(&language.grammar(), strings);
     }
     for named in &engine.inner.themes {
         strings.intern(&named.name);
@@ -209,6 +366,25 @@ impl Writer {
 
     fn bytes(&mut self, value: &[u8]) {
         self.output.extend_from_slice(value);
+    }
+
+    fn sized_bytes(&mut self, value: &[u8]) {
+        self.len(value.len());
+        self.bytes(value);
+    }
+
+    fn text(&mut self, value: &str) {
+        self.sized_bytes(value.as_bytes());
+    }
+
+    fn snapshot_strings(&mut self, strings: &StringTable) {
+        self.len(strings.values.len());
+        for value in &strings.values {
+            self.len(value.len());
+        }
+        for value in &strings.values {
+            self.bytes(value.as_bytes());
+        }
     }
 
     fn u8(&mut self, value: u8) {
@@ -505,6 +681,11 @@ impl<'a> Reader<'a> {
         self.take(len)
     }
 
+    fn text(&mut self) -> Result<&'a str, SnapshotError> {
+        std::str::from_utf8(self.sized_bytes()?)
+            .map_err(|_| SnapshotError("snapshot contains invalid UTF-8"))
+    }
+
     fn vec<T>(
         &mut self,
         mut read: impl FnMut(&mut Self) -> Result<T, SnapshotError>,
@@ -522,12 +703,9 @@ impl<'a> Reader<'a> {
 
     fn string(
         &mut self,
-        strings: &[Arc<str>],
+        strings: &SnapshotStrings,
     ) -> Result<Arc<str>, SnapshotError> {
-        strings
-            .get(self.index()?)
-            .cloned()
-            .ok_or(SnapshotError("snapshot contains an invalid string ID"))
+        strings.get(self.index()?)
     }
 
     fn option_u32(&mut self) -> Result<Option<u32>, SnapshotError> {
@@ -552,7 +730,7 @@ impl<'a> Reader<'a> {
 
     fn grammar(
         &mut self,
-        strings: &[Arc<str>],
+        strings: &SnapshotStrings,
     ) -> Result<CompiledGrammar, SnapshotError> {
         let root_scope_name = self.u32()?;
         let root = self.u32()?;
@@ -670,7 +848,10 @@ impl<'a> Reader<'a> {
         }
     }
 
-    fn theme(&mut self, strings: &[Arc<str>]) -> Result<Theme, SnapshotError> {
+    fn theme(
+        &mut self,
+        strings: &SnapshotStrings,
+    ) -> Result<Theme, SnapshotError> {
         let name = self.string(strings)?;
         let foreground = self.string(strings)?;
         let background = self.string(strings)?;

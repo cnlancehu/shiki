@@ -60,9 +60,10 @@ let mut first = engine.session("rust")?;
 let mut second = engine.session("rust")?;
 ```
 
-The returned engine is cheap to clone. Native Oniguruma scanners are not
-embedded because they contain process-local pointers; they initialize and cache
-on first use.
+The returned engine is cheap to clone. Compiled grammar IR is decoded one
+language at a time on first use. Native Oniguruma scanners are not embedded
+because they contain process-local pointers; they also initialize and cache on
+first use.
 
 ## Remove target-side JSON dependencies
 
@@ -82,15 +83,18 @@ published language and theme assets are JSON inputs.
 
 The macro serializes compiled IR with a purpose-built, versioned codec. Integer
 IDs and lengths use variable-width encoding, strings are deduplicated across the
-whole engine, and the final byte stream is compressed with LZ4. The target
-compiler sees one byte string and one loader call instead of a large syntax tree
-of vector and enum constructors.
+whole engine, and every grammar block is compressed independently with LZ4. The
+target compiler sees one byte string and one loader call instead of a large
+syntax tree of vector and enum constructors.
 
-The first call at a macro site restores the snapshot into normal `shiki` runtime
-types. Later calls reuse the `LazyLock`, so `highlighter!` only creates a cheap
+The first call at a macro site restores only the language index, shared string
+directory, and selected themes. Grammar blocks become normal `shiki` runtime
+types when that language is first highlighted. Later calls reuse both the
+`LazyLock` and decoded grammar IR, so `highlighter!` only creates a cheap
 per-highlighter tokenizer table and `highlighter_engine!` returns an `Arc`-backed
-engine clone. This format is internal and versioned together with `shiki`; it is
-not intended as a persistent interchange format.
+engine clone. `HighlighterEngine::loaded_language_count` reports how many
+grammar blocks are resident. This format is internal and versioned together
+with `shiki`; it is not intended as a persistent interchange format.
 
 ## What is compiled ahead of time
 
@@ -106,10 +110,11 @@ creation still happen in the target process.
 ## Trade-offs
 
 Selecting many large grammars still increases proc-macro work, snapshot size,
-first-use restoration time, and runtime IR memory. In particular, every root
-grammar has a separately resolved dependency closure, so `languages: all` is
-substantially larger than a typical application-specific set. Prefer the
-smallest stable language and theme set that fits the application.
+and executable size. Runtime grammar IR memory grows only for languages that
+are actually used. In particular, every root grammar has a separately resolved
+dependency closure, so `languages: all` is substantially larger than a typical
+application-specific set. Prefer the smallest stable language and theme set
+when executable size and compile time matter.
 
 Use a runtime `HighlighterBuilder` instead when definitions must be selected or
 loaded dynamically.

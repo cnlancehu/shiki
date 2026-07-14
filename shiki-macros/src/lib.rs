@@ -215,7 +215,7 @@ fn compile(input: HighlighterInput) -> Result<TokenStream2> {
         .map_err(|error| syn::Error::new(Span::call_site(), error))?;
     let snapshot = Literal::byte_string(&engine.__to_snapshot());
     Ok(quote! {
-        ::shiki::HighlighterEngine::__from_snapshot(#snapshot)
+        ::shiki::HighlighterEngine::__from_static_snapshot(#snapshot)
     })
 }
 

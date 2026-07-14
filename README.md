@@ -274,10 +274,12 @@ decoder.
 ## Compile-time highlighters
 
 `shiki-macros` resolves and compiles bundled grammars and themes while the proc
-macro runs, serializes the resulting IR into a versioned, LZ4-compressed binary
-snapshot, and emits that snapshot as one byte string. The target compiler no
-longer has to type-check and generate code for every grammar rule. The snapshot
-is restored once by a `LazyLock`; runtime grammar JSON parsing is not used.
+macro runs, serializes the resulting IR into a versioned binary snapshot with
+independently LZ4-compressed grammar blocks, and emits that snapshot as one byte
+string. The target compiler no longer has to type-check and generate code for
+every grammar rule. A `LazyLock` restores the small language index and selected
+themes once; each grammar IR is decoded only when that language is first used.
+Runtime grammar JSON parsing is not used.
 
 ```rust
 let mut highlighter = shiki_macros::highlighter! {
@@ -291,9 +293,9 @@ let mut highlighter = shiki_macros::highlighter! {
 let html = highlighter.code_to_html("const value = 1", "javascript")?;
 ```
 
-Use `highlighter_engine!` to obtain a cloneable shared engine instead. Native
-Oniguruma scanners still initialize lazily on first use because they contain
-process-local pointers.
+Use `highlighter_engine!` to obtain a cloneable shared engine instead. Grammar
+IR and native Oniguruma scanners both initialize lazily per language. Scanners
+cannot be embedded because they contain process-local pointers.
 
 Use `languages: all` to select every bundled language:
 
@@ -313,8 +315,8 @@ cargo add shiki-macros
 
 The proc macro still parses bundled JSON assets on the host. The snapshot codec
 is purpose-built and does not use `serde`, `serde_json`, or `bincode` on the
-target. Very large language sets still create large runtime rule tables; prefer
-the smallest stable set unless arbitrary-language service is a requirement.
+target. Very large language sets increase compile time and executable size, but
+runtime rule-table memory is paid only for languages that are actually used.
 
 ## Performance guidance
 

@@ -36,6 +36,20 @@ fn creates_independent_sessions_from_a_shared_engine() {
 }
 
 #[test]
+fn loads_precompiled_grammars_on_first_use() {
+    let engine = highlighter_engine! {
+        languages: ["rust", "javascript"],
+        themes: [("dark", "github-dark")],
+    };
+
+    assert_eq!(engine.loaded_language_count(), 0);
+    let _rust = engine.session("rust").unwrap();
+    assert_eq!(engine.loaded_language_count(), 1);
+    let _javascript = engine.session("javascript").unwrap();
+    assert_eq!(engine.loaded_language_count(), 2);
+}
+
+#[test]
 fn snapshot_roundtrip_is_deterministic() {
     let engine = highlighter_engine! {
         languages: ["javascript"],

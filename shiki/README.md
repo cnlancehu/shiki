@@ -168,9 +168,12 @@ and the small `lz4_flex` snapshot codec, but not `serde` or `serde_json`.
 
 ## Performance model
 
-Compiled grammar IR and themes belong to the engine. Oniguruma scanners,
-dynamic regexes, scope transitions, injection results, and style rows are
-created lazily in a highlighter or session.
+Compiled grammar IR and themes belong to the engine. Engines produced by
+`shiki-macros` decode each grammar IR on first use; runtime-built engines compile
+their selected grammars eagerly. Oniguruma scanners, dynamic regexes, scope
+transitions, injection results, and style rows are created lazily in a
+highlighter or session. `HighlighterEngine::loaded_language_count` exposes the
+number of resident grammar IRs.
 
 - Reuse engines and sessions.
 - Bundle only required roots when possible.
