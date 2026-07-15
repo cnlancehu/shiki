@@ -60,6 +60,19 @@ fn main() -> shiki::Result<()> {
 }
 ```
 
+### Plain-text fallback
+
+Every engine reserves `text`, `txt`, and `plain` for unhighlighted input. Plain
+text still receives HTML escaping and the selected theme's default styles, but
+each non-empty line remains a single token:
+
+```rust
+let html = highlighter.code_to_html(user_source, "text")?;
+```
+
+This fallback is always available, including in engines generated without an
+explicit plain-text entry.
+
 `languages!` accepts generated identifiers and aliases. It also includes every
 transitive grammar dependency required by the selected roots. For example,
 selecting Vue includes the grammars injected into Vue documents.

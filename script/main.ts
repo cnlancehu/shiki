@@ -148,6 +148,9 @@ pub static ALL_LANGUAGE_GROUPS: &[LanguageGroup] = &[${all.map((item) => `${iden
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __language_group {
+    (text) => { &[] };
+    (txt) => { &[] };
+    (plain) => { &[] };
 ${macroArms.join("\n")}
 }
 

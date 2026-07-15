@@ -7,9 +7,9 @@ use std::{
 };
 
 use crate::{
-    definition::{LanguageBundle, ThemeDefinition},
+    definition::{LanguageBundle, ThemeDefinition, is_plain_text},
     error::{Error, Result},
-    grammar::{RawGrammar, compile},
+    grammar::{RawGrammar, compile, compile_plain_text},
     renderer::{HtmlOptions, HtmlRenderer, Renderer},
     theme::{FontStyle, RawTheme, Theme},
     tokenizer::{
@@ -733,9 +733,13 @@ impl HighlighterBuilder {
     }
 
     pub fn build_engine(self) -> Result<HighlighterEngine> {
+        let selected_plain_text = !self.languages.is_empty()
+            && self.languages.iter().all(|id| is_plain_text(id));
         let (definitions, root_definitions) = match self.bundle {
             Some(bundle) => bundle.resolve(&self.languages)?,
-            None if self.runtime_languages.is_empty() => {
+            None if self.runtime_languages.is_empty()
+                && !selected_plain_text =>
+            {
                 return Err(Error::NoLanguage);
             }
             None => (Vec::new(), Vec::new()),
@@ -844,6 +848,11 @@ impl HighlighterBuilder {
             for alias in aliases {
                 languages.insert(alias.clone(), index);
             }
+        }
+        let plain_text = compiled.len();
+        compiled.push(CompiledLanguage::eager(compile_plain_text()));
+        for name in ["text", "txt", "plain", "text.plain"] {
+            languages.insert(name.to_owned(), plain_text);
         }
         Ok(HighlighterEngine {
             inner: Arc::new(EngineInner {

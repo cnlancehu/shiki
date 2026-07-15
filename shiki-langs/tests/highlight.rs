@@ -23,6 +23,52 @@ fn highlights_rust_to_html() {
 }
 
 #[test]
+fn plain_text_bypasses_highlighting() {
+    static PLAIN_TEXT: LanguageBundle = shiki_langs::languages![text];
+    let mut highlighter = Highlighter::builder()
+        .bundle(&PLAIN_TEXT)
+        .theme(&shiki_themes::generated::GITHUB_DARK)
+        .build()
+        .unwrap();
+    let options = HtmlOptions {
+        include_line_wrapper: false,
+        ..HtmlOptions::clean()
+    };
+    let source = r#"<script>const message = "hello" && value;</script>"#;
+    let escaped = "&lt;script&gt;const message = \"hello\" &amp;&amp; value;&lt;/script&gt;";
+    let mut expected_html = None;
+
+    for language in ["text", "txt", "plain"] {
+        let html = highlighter
+            .code_to_html_with_options(source, language, &options)
+            .unwrap();
+        assert!(html.contains(escaped), "{html}");
+        assert_eq!(html.matches("<span style=").count(), 1, "{html}");
+        if let Some(expected) = &expected_html {
+            assert_eq!(&html, expected);
+        } else {
+            expected_html = Some(html);
+        }
+
+        let tokens =
+            highlighter.code_to_scope_tokens(source, language).unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].len(), 1);
+        assert_eq!(tokens[0][0].range, 0..source.len());
+        let scopes = highlighter
+            .scope_names(language, tokens[0][0].scopes)
+            .unwrap();
+        assert_eq!(scopes, ["text.plain"]);
+    }
+
+    let standalone = Highlighter::builder()
+        .languages(["text"])
+        .theme(&shiki_themes::generated::GITHUB_DARK)
+        .build();
+    assert!(standalone.is_ok(), "{:?}", standalone.err());
+}
+
+#[test]
 fn keeps_multiline_state() {
     let mut highlighter = Highlighter::builder()
         .bundle(&LANGUAGES)

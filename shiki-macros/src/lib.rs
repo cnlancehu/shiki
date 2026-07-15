@@ -172,7 +172,8 @@ fn compile(input: HighlighterInput) -> Result<TokenStream2> {
                     .any(|language| {
                         language.id == id
                             || language.aliases.iter().any(|alias| alias == id)
-                    });
+                    })
+                    || matches!(id.as_str(), "text" | "txt" | "plain");
                 if !available {
                     return Err(syn::Error::new(
                         literal.span(),

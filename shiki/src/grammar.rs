@@ -253,6 +253,20 @@ pub fn compile(
     })
 }
 
+pub(crate) fn compile_plain_text() -> CompiledGrammar {
+    let raw = RawGrammar {
+        name: Some(RawString::borrowed("Plain Text")),
+        scope_name: RawString::borrowed("text.plain"),
+        patterns: RawList::EMPTY,
+        repository: RawMap::EMPTY,
+        injections: RawMap::EMPTY,
+        injection_selector: None,
+    };
+    let grammars = HashMap::from([("text.plain".to_owned(), &raw)]);
+    compile("text.plain", &grammars, &HashMap::new())
+        .expect("the built-in plain-text grammar is always valid")
+}
+
 struct Compiler<'a> {
     grammars: &'a HashMap<String, &'a RawGrammar<'static>>,
     rules: Vec<Rule>,

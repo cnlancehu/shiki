@@ -33,6 +33,11 @@ Language and bundled theme IDs are string literals. Unknown IDs are reported as
 compile errors. Language dependencies and injection grammars are included
 automatically.
 
+`text` is always available as a no-highlighting fallback; `txt` and `plain` are
+aliases. It keeps HTML escaping and the theme's default styles but emits only
+one token per non-empty line. It may be selected by itself or used even when it
+is omitted from `languages`.
+
 Select the complete bundled catalog with `languages: all`:
 
 ```rust,ignore

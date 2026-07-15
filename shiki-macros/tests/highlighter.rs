@@ -11,6 +11,32 @@ fn creates_a_highlighter_from_generated_rust() {
         .unwrap();
     assert!(html.contains("hello"));
     assert!(html.contains("#"));
+    let plain = highlighter.code_to_html("<b>plain</b>", "text").unwrap();
+    assert!(plain.contains("&lt;b&gt;plain&lt;/b&gt;"), "{plain}");
+}
+
+#[test]
+fn supports_plain_text_and_aliases() {
+    let mut highlighter = highlighter! {
+        languages: ["txt"],
+        themes: [("dark", "catppuccin-mocha")],
+    };
+    let source = "<b>not highlighted</b>";
+    let mut expected_html = None;
+
+    for language in ["text", "txt", "plain"] {
+        let html = highlighter.code_to_html(source, language).unwrap();
+        assert!(
+            html.contains("&lt;b&gt;not highlighted&lt;/b&gt;"),
+            "{html}"
+        );
+        assert_eq!(html.matches("<span style=").count(), 1, "{html}");
+        if let Some(expected) = &expected_html {
+            assert_eq!(&html, expected);
+        } else {
+            expected_html = Some(html);
+        }
+    }
 }
 
 #[test]

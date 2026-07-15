@@ -33,6 +33,14 @@ Macro arguments are generated identifiers. Common aliases are accepted when
 they can be represented as Rust identifiers, for example `js`, `ts`, `yml`, or
 `adoc`.
 
+The core engine always provides plain text under `text`, `txt`, and `plain`.
+These names are also accepted by `languages!`, although they do not add a
+grammar asset:
+
+```rust,ignore
+static PLAIN_TEXT: LanguageBundle = shiki_langs::languages![text];
+```
+
 The builder's `.languages(...)` call enables selected roots from the bundle.
 Omit it to enable every root contained in that bundle.
 

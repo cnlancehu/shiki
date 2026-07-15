@@ -9,6 +9,10 @@ use crate::{
     theme::{RawTheme, Theme},
 };
 
+pub(crate) fn is_plain_text(language: &str) -> bool {
+    matches!(language, "text" | "txt" | "plain")
+}
+
 pub struct LanguageDefinition {
     pub id: &'static str,
     pub display_name: &'static str,
@@ -132,6 +136,7 @@ impl LanguageBundle {
         } else {
             selected
                 .iter()
+                .filter(|id| !is_plain_text(id))
                 .map(|id| {
                     by_name
                         .get(id.as_str())

@@ -40,6 +40,30 @@ let mut highlighter = Highlighter::builder()
 let html = highlighter.code_to_html("fn main() {}", "rust")?;
 ```
 
+## Plain text
+
+Every engine includes the reserved `text` language and its `txt` and `plain`
+aliases. It emits one token for each non-empty line, bypassing syntax matching
+while retaining HTML escaping and the selected theme's default foreground and
+background styles. This makes it suitable as the fallback for an unavailable
+or user-provided language:
+
+```rust,ignore
+let html = highlighter.code_to_html(
+    "<script>not highlighted</script>",
+    "text",
+)?;
+```
+
+A standalone plain-text engine does not require a language bundle:
+
+```rust,ignore
+let mut highlighter = shiki::Highlighter::builder()
+    .languages(["text"])
+    .theme(&shiki_themes::GITHUB_DARK)
+    .build()?;
+```
+
 Build a shared engine when several documents need the same immutable grammar
 and theme data:
 
