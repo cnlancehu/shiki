@@ -7,32 +7,29 @@ use std::{
 };
 
 use crate::{
-    ansi::{
-        AnsiState, parse_line as parse_ansi_line,
-        resolve_style as resolve_ansi_style,
-    },
+    ansi::AnsiParser,
     definition::{LanguageBundle, ThemeDefinition, is_plain_text},
     error::{Error, Result},
     grammar::{RawGrammar, compile, compile_plain_text},
     renderer::{HtmlOptions, HtmlRenderer, Renderer},
-    theme::{FontStyle, RawTheme, Theme},
+    theme::{FontStyle, RawTheme, Style, Theme},
     tokenizer::{
-        GrammarState, MultiThemedToken, RegexLimits, ScopeToken, ThemeId,
-        ThemeTokenStyle, ThemedToken, Tokenizer, TokenizerCacheStats,
+        GrammarState, MultiThemedToken, RegexLimits, ScopeStackId, ScopeToken,
+        ThemeId, ThemeTokenStyle, ThemedToken, Tokenizer, TokenizerCacheStats,
     },
 };
 
 #[derive(Clone)]
-pub struct NamedTheme {
-    pub name: String,
-    pub css_name: String,
-    pub theme: Arc<Theme>,
+pub(crate) struct NamedTheme {
+    pub(crate) name: String,
+    pub(crate) css_name: String,
+    pub(crate) theme: Arc<Theme>,
 }
 
-pub struct CompiledLanguage {
+pub(crate) struct CompiledLanguage {
     grammar: OnceLock<Arc<crate::grammar::CompiledGrammar>>,
     snapshot: Option<crate::snapshot::GrammarSnapshot>,
-    pub grammar_id: u64,
+    grammar_id: u64,
 }
 
 impl CompiledLanguage {
@@ -73,34 +70,43 @@ impl CompiledLanguage {
     }
 }
 
-pub struct EngineInner {
-    pub languages: HashMap<String, usize>,
-    pub compiled: Vec<CompiledLanguage>,
-    pub themes: Vec<NamedTheme>,
-    pub regex_limits: RegexLimits,
+pub(crate) struct EngineInner {
+    pub(crate) languages: HashMap<String, usize>,
+    pub(crate) compiled: Vec<CompiledLanguage>,
+    pub(crate) themes: Vec<NamedTheme>,
+    pub(crate) regex_limits: RegexLimits,
 }
 
 #[derive(Clone)]
 pub struct HighlighterEngine {
-    pub inner: Arc<EngineInner>,
+    pub(crate) inner: Arc<EngineInner>,
 }
 
 pub struct LanguageSession {
-    pub tokenizer: Tokenizer,
+    tokenizer: Tokenizer,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedStyle<'a> {
     pub color: &'a str,
     pub background: Option<&'a str>,
     pub font_style: FontStyle,
 }
 
+/// Read-only theme metadata exposed to renderers.
+#[derive(Debug, Clone, Copy)]
+pub struct ThemeInfo<'a> {
+    pub id: ThemeId,
+    pub name: &'a str,
+    pub css_name: &'a str,
+    pub theme: &'a Theme,
+}
+
 static NEXT_GRAMMAR_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct Highlighter {
-    pub engine: HighlighterEngine,
-    pub tokenizers: Vec<Option<Tokenizer>>,
+    pub(crate) engine: HighlighterEngine,
+    pub(crate) tokenizers: Vec<Option<Tokenizer>>,
 }
 
 pub struct HighlighterBuilder {
@@ -181,12 +187,16 @@ impl Highlighter {
         self.engine.theme_names()
     }
 
-    pub fn theme_name(&self, theme: crate::tokenizer::ThemeId) -> Option<&str> {
-        self.engine
-            .inner
-            .themes
-            .get(theme as usize)
-            .map(|theme| theme.name.as_str())
+    pub fn themes(&self) -> impl ExactSizeIterator<Item = ThemeInfo<'_>> {
+        self.engine.themes()
+    }
+
+    pub fn theme_name(&self, theme: ThemeId) -> Option<&str> {
+        self.engine.theme_name(theme)
+    }
+
+    pub fn theme_css_name(&self, theme: ThemeId) -> Option<&str> {
+        self.engine.theme_css_name(theme)
     }
 
     pub fn theme(&self, theme: ThemeId) -> Option<&Theme> {
@@ -199,33 +209,49 @@ impl Highlighter {
         scopes: crate::tokenizer::ScopeStackId,
         theme_id: ThemeId,
     ) -> Result<ResolvedStyle<'_>> {
+        self.token_styles(language, scopes)?
+            .nth(theme_id as usize)
+            .map(|(_, style)| style)
+            .ok_or(Error::InvalidThemeId(theme_id))
+    }
+
+    /// Resolves a scope stack for every configured theme without allocating.
+    ///
+    /// This is the preferred styling primitive for custom streaming renderers.
+    pub fn token_styles<'a>(
+        &'a mut self,
+        language: &str,
+        scopes: ScopeStackId,
+    ) -> Result<impl ExactSizeIterator<Item = (ThemeId, ResolvedStyle<'a>)> + 'a>
+    {
         let language = self.language_index(language)?;
-        if theme_id as usize >= self.engine.inner.themes.len() {
-            return Err(Error::InvalidThemeId(theme_id));
-        }
         self.ensure_tokenizer(language);
-        let theme = self
-            .engine
-            .inner
-            .themes
-            .get(theme_id as usize)
-            .ok_or(Error::InvalidThemeId(theme_id))?;
+        let themes = &self.engine.inner.themes;
         let tokenizer = self.tokenizers[language]
             .as_mut()
             .expect("initialized tokenizer");
         if !tokenizer.contains_scope_stack(scopes) {
             return Err(Error::InvalidScopeStack(scopes));
         }
-        let style = tokenizer.styles(scopes)[theme_id as usize];
-        Ok(ResolvedStyle {
-            color: theme.theme.color(
-                style
-                    .foreground
-                    .unwrap_or_else(|| theme.theme.foreground_id()),
-            ),
-            background: style.background.map(|color| theme.theme.color(color)),
-            font_style: style.font_style.unwrap_or_default(),
-        })
+        let styles = tokenizer.styles(scopes);
+        Ok(themes.iter().zip(styles).enumerate().map(
+            |(theme_id, (theme, style))| {
+                (
+                    theme_id.try_into().expect("too many themes"),
+                    ResolvedStyle {
+                        color: theme.theme.color(
+                            style
+                                .foreground
+                                .unwrap_or_else(|| theme.theme.foreground_id()),
+                        ),
+                        background: style
+                            .background
+                            .map(|color| theme.theme.color(color)),
+                        font_style: style.font_style.unwrap_or_default(),
+                    },
+                )
+            },
+        ))
     }
 
     pub fn clear_language_cache(&mut self, language: &str) -> Result<()> {
@@ -284,6 +310,30 @@ impl Highlighter {
             .tokenize_line(line, previous, is_first_line)
     }
 
+    /// Tokenizes one line into a caller-owned buffer.
+    ///
+    /// The buffer is cleared and reused. `state` is advanced in place, which
+    /// avoids cloning a grammar stack between lines.
+    pub fn tokenize_line_into(
+        &mut self,
+        line: &str,
+        language: &str,
+        state: &mut GrammarState,
+        is_first_line: bool,
+        output: &mut Vec<ScopeToken>,
+    ) -> Result<()> {
+        let tokenizer = self.tokenizer(language)?;
+        tokenizer.validate_state(state)?;
+        let previous = std::mem::take(state);
+        *state = tokenizer.tokenize_line_into_owned(
+            line,
+            Some(previous),
+            is_first_line,
+            output,
+        )?;
+        Ok(())
+    }
+
     pub fn code_to_scope_tokens(
         &mut self,
         code: &str,
@@ -316,19 +366,21 @@ impl Highlighter {
         if crate::ansi::is_ansi(language) {
             return Ok(self.code_to_ansi_tokens(code));
         }
-        let tokens = self.code_to_scope_tokens(code, language)?;
         let language = self.language_index(language)?;
-        let theme = &self.engine.inner.themes[0].theme;
+        self.ensure_tokenizer(language);
+        let themes = &self.engine.inner.themes;
         let tokenizer = self.tokenizers[language]
             .as_mut()
             .expect("initialized tokenizer");
-        let mut output = Vec::with_capacity(tokens.len());
-        for (tokens, line) in tokens.into_iter().zip(split_lines(code)) {
-            let mut output_line = Vec::with_capacity(tokens.len());
-            for token in tokens {
-                let style = tokenizer.styles(token.scopes)[0];
-                output_line.push(ThemedToken {
-                    content: line[token.range].to_owned(),
+        map_grammar_tokens(
+            tokenizer,
+            themes,
+            code,
+            |line, token, styles, themes| {
+                let theme = &themes[0].theme;
+                let style = styles[0];
+                ThemedToken {
+                    content: line[token.range.clone()].to_owned(),
                     color: theme.color_arc(
                         style
                             .foreground
@@ -339,11 +391,9 @@ impl Highlighter {
                         .map(|color| theme.color_arc(color)),
                     font_style: style.font_style.unwrap_or_default(),
                     scopes: token.scopes,
-                });
-            }
-            output.push(output_line);
-        }
-        Ok(output)
+                }
+            },
+        )
     }
 
     pub fn code_to_tokens_with_themes(
@@ -354,20 +404,21 @@ impl Highlighter {
         if crate::ansi::is_ansi(language) {
             return Ok(self.code_to_ansi_tokens_with_themes(code));
         }
-        let tokens = self.code_to_scope_tokens(code, language)?;
         let language = self.language_index(language)?;
+        self.ensure_tokenizer(language);
         let themes = &self.engine.inner.themes;
         let tokenizer = self.tokenizers[language]
             .as_mut()
             .expect("initialized tokenizer");
-        let mut output = Vec::with_capacity(tokens.len());
-        for (tokens, line) in tokens.into_iter().zip(split_lines(code)) {
-            let mut output_line = Vec::with_capacity(tokens.len());
-            for token in tokens {
+        map_grammar_tokens(
+            tokenizer,
+            themes,
+            code,
+            |line, token, styles, themes| {
                 let styles = themes
                     .iter()
                     .enumerate()
-                    .zip(tokenizer.styles(token.scopes))
+                    .zip(styles)
                     .map(|((theme_id, theme), style)| ThemeTokenStyle {
                         theme: theme_id.try_into().expect("too many themes"),
                         color: theme.theme.color_arc(
@@ -381,28 +432,25 @@ impl Highlighter {
                         font_style: style.font_style.unwrap_or_default(),
                     })
                     .collect();
-                output_line.push(MultiThemedToken {
-                    content: line[token.range].to_owned(),
+                MultiThemedToken {
+                    content: line[token.range.clone()].to_owned(),
                     styles,
                     scopes: token.scopes,
-                });
-            }
-            output.push(output_line);
-        }
-        Ok(output)
+                }
+            },
+        )
     }
 
     fn code_to_ansi_tokens(&self, code: &str) -> Vec<Vec<ThemedToken>> {
         let theme = &self.engine.inner.themes[0].theme;
-        let mut state = AnsiState::default();
-        let mut spans = Vec::new();
+        let mut parser = AnsiParser::new();
         split_lines(code)
             .map(|line| {
-                parse_ansi_line(line, &mut state, &mut spans);
+                let spans = parser.parse_line(line);
                 let mut output: Vec<ThemedToken> =
                     Vec::with_capacity(spans.len());
-                for span in &spans {
-                    let style = resolve_ansi_style(theme, span.state);
+                for span in spans {
+                    let style = span.state.resolve(theme);
                     let content = &line[span.range.clone()];
                     if let Some(previous) = output.last_mut()
                         && previous.color == style.color
@@ -430,20 +478,18 @@ impl Highlighter {
         code: &str,
     ) -> Vec<Vec<MultiThemedToken>> {
         let themes = &self.engine.inner.themes;
-        let mut state = AnsiState::default();
-        let mut spans = Vec::new();
+        let mut parser = AnsiParser::new();
         split_lines(code)
             .map(|line| {
-                parse_ansi_line(line, &mut state, &mut spans);
+                let spans = parser.parse_line(line);
                 let mut output: Vec<MultiThemedToken> =
                     Vec::with_capacity(spans.len());
-                for span in &spans {
+                for span in spans {
                     let styles = themes
                         .iter()
                         .enumerate()
                         .map(|(theme_id, theme)| {
-                            let style =
-                                resolve_ansi_style(&theme.theme, span.state);
+                            let style = span.state.resolve(&theme.theme);
                             ThemeTokenStyle {
                                 theme: theme_id
                                     .try_into()
@@ -500,7 +546,7 @@ impl Highlighter {
         renderer.render(self, code, language)
     }
 
-    pub fn language_index(&self, language: &str) -> Result<usize> {
+    pub(crate) fn language_index(&self, language: &str) -> Result<usize> {
         self.engine
             .inner
             .languages
@@ -509,7 +555,7 @@ impl Highlighter {
             .ok_or_else(|| Error::GrammarNotLoaded(language.to_owned()))
     }
 
-    pub fn tokenizer(&mut self, language: &str) -> Result<&mut Tokenizer> {
+    fn tokenizer(&mut self, language: &str) -> Result<&mut Tokenizer> {
         let index = self.language_index(language)?;
         self.ensure_tokenizer(index);
         Ok(self.tokenizers[index]
@@ -517,7 +563,7 @@ impl Highlighter {
             .expect("initialized tokenizer"))
     }
 
-    pub fn ensure_tokenizer(&mut self, index: usize) {
+    pub(crate) fn ensure_tokenizer(&mut self, index: usize) {
         if self.tokenizers[index].is_some() {
             return;
         }
@@ -536,6 +582,33 @@ impl Highlighter {
             self.engine.inner.regex_limits,
         ));
     }
+}
+
+fn map_grammar_tokens<T>(
+    tokenizer: &mut Tokenizer,
+    themes: &[NamedTheme],
+    code: &str,
+    mut map: impl FnMut(&str, &ScopeToken, &[Style], &[NamedTheme]) -> T,
+) -> Result<Vec<Vec<T>>> {
+    let mut state = None;
+    let mut scope_tokens = Vec::new();
+    let mut output = Vec::new();
+    for (line_index, line) in split_lines(code).enumerate() {
+        let next = tokenizer.tokenize_line_into_owned(
+            line,
+            state.take(),
+            line_index == 0,
+            &mut scope_tokens,
+        )?;
+        state = Some(next);
+        let mut output_line = Vec::with_capacity(scope_tokens.len());
+        for token in &scope_tokens {
+            let styles = tokenizer.styles(token.scopes);
+            output_line.push(map(line, token, styles, themes));
+        }
+        output.push(output_line);
+    }
+    Ok(output)
 }
 
 impl HighlighterEngine {
@@ -561,6 +634,33 @@ impl HighlighterEngine {
 
     pub fn theme_names(&self) -> impl Iterator<Item = &str> {
         self.inner.themes.iter().map(|theme| theme.name.as_str())
+    }
+
+    pub fn themes(&self) -> impl ExactSizeIterator<Item = ThemeInfo<'_>> {
+        self.inner
+            .themes
+            .iter()
+            .enumerate()
+            .map(|(id, named)| ThemeInfo {
+                id: id.try_into().expect("too many themes"),
+                name: &named.name,
+                css_name: &named.css_name,
+                theme: &named.theme,
+            })
+    }
+
+    pub fn theme_name(&self, theme: ThemeId) -> Option<&str> {
+        self.inner
+            .themes
+            .get(theme as usize)
+            .map(|theme| theme.name.as_str())
+    }
+
+    pub fn theme_css_name(&self, theme: ThemeId) -> Option<&str> {
+        self.inner
+            .themes
+            .get(theme as usize)
+            .map(|theme| theme.css_name.as_str())
     }
 
     pub fn theme(&self, theme: ThemeId) -> Option<&Theme> {
@@ -732,15 +832,28 @@ impl LanguageSession {
         state: &mut GrammarState,
         is_first_line: bool,
     ) -> Result<Vec<ScopeToken>> {
+        let mut output = Vec::new();
+        self.tokenize_line_into(line, state, is_first_line, &mut output)?;
+        Ok(output)
+    }
+
+    /// Tokenizes one line into a reusable caller-owned buffer.
+    pub fn tokenize_line_into(
+        &mut self,
+        line: &str,
+        state: &mut GrammarState,
+        is_first_line: bool,
+        output: &mut Vec<ScopeToken>,
+    ) -> Result<()> {
         self.tokenizer.validate_state(state)?;
         let previous = std::mem::take(state);
-        let (tokens, next) = self.tokenizer.tokenize_line_owned(
+        *state = self.tokenizer.tokenize_line_into_owned(
             line,
             Some(previous),
             is_first_line,
+            output,
         )?;
-        *state = next;
-        Ok(tokens)
+        Ok(())
     }
 }
 
@@ -975,6 +1088,8 @@ pub fn css_name(name: &str) -> String {
     }
 }
 
+/// Splits source exactly as the highlighter does, preserving an empty source
+/// line while omitting the synthetic line after a trailing newline.
 pub fn split_lines(code: &str) -> impl Iterator<Item = &str> {
     let without_trailing_newline = code.strip_suffix('\n').unwrap_or(code);
     without_trailing_newline

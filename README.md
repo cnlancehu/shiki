@@ -223,7 +223,9 @@ Choose the least expensive representation that fits the consumer:
 - `code_to_tokens` returns owned tokens resolved against one theme.
 - `code_to_tokens_with_themes` returns owned tokens for every configured theme.
 - `tokenize_line` and `GrammarState` support incremental documents and editors.
-- `tokenizer` exposes the per-language tokenizer for advanced integrations.
+- `tokenize_line_into` reuses caller-owned storage in streaming renderers.
+- `token_styles` resolves all configured themes without allocating.
+- `ansi::AnsiParser` exposes the stateful ANSI path to custom renderers.
 
 ## Shared engines and sessions
 
@@ -270,14 +272,32 @@ impl Renderer for TokenCount {
         code: &str,
         language: &str,
     ) -> shiki::Result<Self::Output> {
-        Ok(highlighter
-            .code_to_scope_tokens(code, language)?
-            .iter()
-            .map(Vec::len)
-            .sum())
+        let mut state = highlighter.initial_state(language)?;
+        let mut tokens = Vec::new();
+        let mut count = 0;
+        for (line_index, line) in shiki::split_lines(code).enumerate() {
+            highlighter.tokenize_line_into(
+                line,
+                language,
+                &mut state,
+                line_index == 0,
+                &mut tokens,
+            )?;
+            for token in &tokens {
+                // Iterates borrowed styles; no per-token style Vec is built.
+                count += highlighter
+                    .token_styles(language, token.scopes)?
+                    .count();
+            }
+        }
+        Ok(count)
     }
 }
 ```
+
+The public `ThemeInfo` iterator provides theme names, CSS-safe names, and raw
+theme palettes. ANSI renderers can use `ansi::AnsiParser::parse_line`; it
+retains SGR state between lines and reuses its span buffer.
 
 ## Runtime grammars and themes
 

@@ -607,18 +607,39 @@ fn renderer_trait_supports_custom_outputs() {
             code: &str,
             language: &str,
         ) -> shiki::Result<Self::Output> {
-            Ok(highlighter
-                .code_to_scope_tokens(code, language)?
-                .iter()
-                .map(Vec::len)
-                .sum())
+            let mut state = highlighter.initial_state(language)?;
+            let mut tokens = Vec::new();
+            let mut count = 0;
+            let theme_count = highlighter.themes().len();
+            for (line_index, line) in shiki::split_lines(code).enumerate() {
+                highlighter.tokenize_line_into(
+                    line,
+                    language,
+                    &mut state,
+                    line_index == 0,
+                    &mut tokens,
+                )?;
+                for token in &tokens {
+                    assert_eq!(
+                        highlighter
+                            .token_styles(language, token.scopes)?
+                            .count(),
+                        theme_count
+                    );
+                    count += 1;
+                }
+            }
+            Ok(count)
         }
     }
 
     let mut highlighter = Highlighter::builder()
         .bundle(&LANGUAGES)
         .languages(["rust"])
-        .theme(&shiki_themes::generated::GITHUB_DARK)
+        .themes([
+            ("light", &shiki_themes::generated::GITHUB_LIGHT),
+            ("dark", &shiki_themes::generated::GITHUB_DARK),
+        ])
         .build()
         .unwrap();
     let count = highlighter
@@ -633,6 +654,22 @@ fn renderer_trait_supports_custom_outputs() {
         .render("let value = 1;", "rust", &mut html)
         .unwrap();
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn public_ansi_parser_reuses_state_across_lines() {
+    let mut parser = shiki::ansi::AnsiParser::new();
+    let first = "\x1b[31mred";
+    let spans = parser.parse_line(first);
+    assert_eq!(&first[spans[0].range.clone()], "red");
+    assert!(spans[0].state.foreground().is_some());
+
+    let second = "still red\x1b[0m plain";
+    let spans = parser.parse_line(second);
+    assert_eq!(&second[spans[0].range.clone()], "still red");
+    assert!(spans[0].state.foreground().is_some());
+    assert_eq!(&second[spans[1].range.clone()], " plain");
+    assert!(!spans[1].state.has_explicit_style());
 }
 
 #[test]

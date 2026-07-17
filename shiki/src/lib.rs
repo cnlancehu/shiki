@@ -1,13 +1,13 @@
 #![doc = include_str!("../README.md")]
 
-mod ansi;
+pub mod ansi;
 mod definition;
 mod error;
 mod grammar;
 mod highlighter;
 mod matcher;
 mod raw;
-mod renderer;
+pub mod renderer;
 mod snapshot;
 mod theme;
 mod tokenizer;
@@ -20,7 +20,7 @@ pub use error::{Error, Result};
 pub use grammar::{RawGrammar, RawRule};
 pub use highlighter::{
     Highlighter, HighlighterBuilder, HighlighterEngine, LanguageInput,
-    LanguageSession, ResolvedStyle, ThemeInput,
+    LanguageSession, ResolvedStyle, ThemeInfo, ThemeInput, split_lines,
 };
 pub use raw::{RawList, RawMap, RawMapEntry, RawString};
 pub use renderer::{HtmlOptions, HtmlRenderer, Renderer};

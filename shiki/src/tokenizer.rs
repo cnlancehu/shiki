@@ -156,14 +156,19 @@ impl ScopeArena {
         child
     }
 
-    fn path(&self, mut stack: ScopeStackId) -> Vec<ScopeId> {
-        let mut path = Vec::new();
+    fn fill_path(&self, mut stack: ScopeStackId, path: &mut Vec<ScopeId>) {
+        path.clear();
         while stack != 0 {
             let node = &self.nodes[stack as usize];
             path.push(node.scope.expect("non-root scope node"));
             stack = self.parents[stack as usize];
         }
         path.reverse();
+    }
+
+    fn path(&self, stack: ScopeStackId) -> Vec<ScopeId> {
+        let mut path = Vec::new();
+        self.fill_path(stack, &mut path);
         path
     }
 
@@ -315,7 +320,7 @@ struct Retokenize {
     scopes: ScopeStackId,
 }
 
-pub struct Tokenizer {
+pub(crate) struct Tokenizer {
     grammar: Arc<CompiledGrammar>,
     grammar_id: u64,
     tokenizer_id: u64,
@@ -335,6 +340,7 @@ pub struct Tokenizer {
     root_scope: ScopeStackId,
     line_buffers: Vec<String>,
     capture_buffers: Vec<Vec<Option<Range<usize>>>>,
+    scope_path: Vec<ScopeId>,
 }
 
 static NEXT_TOKENIZER_ID: AtomicU64 = AtomicU64::new(1);
@@ -380,10 +386,11 @@ impl Tokenizer {
             root_scope,
             line_buffers: Vec::new(),
             capture_buffers: Vec::new(),
+            scope_path: Vec::new(),
         }
     }
 
-    pub fn initial_state(&self) -> GrammarState {
+    pub(crate) fn initial_state(&self) -> GrammarState {
         GrammarState {
             grammar: self.grammar_id,
             tokenizer: self.tokenizer_id,
@@ -410,7 +417,7 @@ impl Tokenizer {
         Ok(())
     }
 
-    pub fn cache_stats(&self) -> TokenizerCacheStats {
+    pub(crate) fn cache_stats(&self) -> TokenizerCacheStats {
         let line_bytes = self
             .line_buffers
             .iter()
@@ -432,11 +439,13 @@ impl Tokenizer {
             capture_values: self.scopes.captures.len(),
             injection_sets: self.injection_sets.len(),
             style_rows: self.style_rows.len(),
-            reusable_buffer_bytes: line_bytes + capture_bytes,
+            reusable_buffer_bytes: line_bytes
+                + capture_bytes
+                + self.scope_path.capacity() * std::mem::size_of::<ScopeId>(),
         }
     }
 
-    pub fn tokenize_line(
+    pub(crate) fn tokenize_line(
         &mut self,
         line: &str,
         previous: Option<&GrammarState>,
@@ -445,13 +454,30 @@ impl Tokenizer {
         self.tokenize_line_owned(line, previous.cloned(), is_first_line)
     }
 
-    pub fn tokenize_line_owned(
+    pub(crate) fn tokenize_line_owned(
         &mut self,
         line: &str,
         previous: Option<GrammarState>,
         is_first_line: bool,
     ) -> Result<(Vec<ScopeToken>, GrammarState)> {
         let mut tokens = Vec::new();
+        let state = self.tokenize_line_into_owned(
+            line,
+            previous,
+            is_first_line,
+            &mut tokens,
+        )?;
+        Ok((tokens, state))
+    }
+
+    pub(crate) fn tokenize_line_into_owned(
+        &mut self,
+        line: &str,
+        previous: Option<GrammarState>,
+        is_first_line: bool,
+        tokens: &mut Vec<ScopeToken>,
+    ) -> Result<GrammarState> {
+        tokens.clear();
         let mut state = previous.unwrap_or_else(|| self.initial_state());
         self.validate_state(&state)?;
         if state.stack.is_empty() {
@@ -470,7 +496,7 @@ impl Tokenizer {
             &text,
             &mut position,
             &mut state,
-            &mut tokens,
+            tokens,
             is_first_line,
             &mut captures,
         )?;
@@ -492,7 +518,7 @@ impl Tokenizer {
                 &mut captures,
             )?
             else {
-                emit(&mut tokens, position, line.len(), frame.content_scopes);
+                emit(tokens, position, line.len(), frame.content_scopes);
                 break;
             };
             clamp_captures(&mut captures, line.len());
@@ -501,7 +527,7 @@ impl Tokenizer {
             };
             if full.start > position {
                 emit(
-                    &mut tokens,
+                    tokens,
                     position,
                     full.start.min(line.len()),
                     frame.content_scopes,
@@ -515,12 +541,7 @@ impl Tokenizer {
                     .map(|frame| frame.rule)
                     .collect::<Vec<_>>();
                 if !zero_width_states.insert((position, stack, action)) {
-                    emit(
-                        &mut tokens,
-                        position,
-                        line.len(),
-                        frame.content_scopes,
-                    );
+                    emit(tokens, position, line.len(), frame.content_scopes);
                     break;
                 }
             } else {
@@ -538,7 +559,7 @@ impl Tokenizer {
                         &mut self.scopes,
                         &self.grammar.scope_names,
                         &self.grammar.scope_templates,
-                        &mut tokens,
+                        tokens,
                         &captures,
                         frame.scopes,
                         None,
@@ -546,7 +567,7 @@ impl Tokenizer {
                         line.len(),
                         &text,
                     );
-                    self.apply_retokenizations(&mut tokens, tasks, &text)?;
+                    self.apply_retokenizations(tokens, tasks, &text)?;
                     state.stack.pop();
                 }
                 Action::Rule(id) => {
@@ -560,7 +581,7 @@ impl Tokenizer {
                                 &mut self.scopes,
                                 &self.grammar.scope_names,
                                 &self.grammar.scope_templates,
-                                &mut tokens,
+                                tokens,
                                 &captures,
                                 frame.content_scopes,
                                 rule.name,
@@ -568,11 +589,7 @@ impl Tokenizer {
                                 line.len(),
                                 &text,
                             );
-                            self.apply_retokenizations(
-                                &mut tokens,
-                                tasks,
-                                &text,
-                            )?;
+                            self.apply_retokenizations(tokens, tasks, &text)?;
                         }
                         RuleKind::BeginEnd {
                             begin_captures,
@@ -595,7 +612,7 @@ impl Tokenizer {
                                 &mut self.scopes,
                                 &self.grammar.scope_names,
                                 &self.grammar.scope_templates,
-                                &mut tokens,
+                                tokens,
                                 &captures,
                                 frame.content_scopes,
                                 name,
@@ -603,11 +620,7 @@ impl Tokenizer {
                                 line.len(),
                                 &text,
                             );
-                            self.apply_retokenizations(
-                                &mut tokens,
-                                tasks,
-                                &text,
-                            )?;
+                            self.apply_retokenizations(tokens, tasks, &text)?;
                             let scopes = extend_scopes(
                                 &mut self.scopes,
                                 &self.grammar.scope_names,
@@ -658,7 +671,7 @@ impl Tokenizer {
                                 &mut self.scopes,
                                 &self.grammar.scope_names,
                                 &self.grammar.scope_templates,
-                                &mut tokens,
+                                tokens,
                                 &captures,
                                 frame.content_scopes,
                                 name,
@@ -666,11 +679,7 @@ impl Tokenizer {
                                 line.len(),
                                 &text,
                             );
-                            self.apply_retokenizations(
-                                &mut tokens,
-                                tasks,
-                                &text,
-                            )?;
+                            self.apply_retokenizations(tokens, tasks, &text)?;
                             let scopes = extend_scopes(
                                 &mut self.scopes,
                                 &self.grammar.scope_names,
@@ -717,21 +726,24 @@ impl Tokenizer {
         }
         self.capture_buffers.push(captures);
         self.line_buffers.push(text);
-        Ok((tokens, state))
+        Ok(state)
     }
 
-    pub fn styles(&mut self, stack: ScopeStackId) -> &[Style] {
+    pub(crate) fn styles(&mut self, stack: ScopeStackId) -> &[Style] {
         self.ensure_styles(stack);
         let theme_count = self.themes.len();
         let start = stack as usize * theme_count;
         &self.style_rows[start..start + theme_count]
     }
 
-    pub fn contains_scope_stack(&self, stack: ScopeStackId) -> bool {
+    pub(crate) fn contains_scope_stack(&self, stack: ScopeStackId) -> bool {
         (stack as usize) < self.scopes.nodes.len()
     }
 
-    pub fn scope_names(&self, stack: ScopeStackId) -> Result<Vec<String>> {
+    pub(crate) fn scope_names(
+        &self,
+        stack: ScopeStackId,
+    ) -> Result<Vec<String>> {
         if stack as usize >= self.scopes.nodes.len() {
             return Err(Error::InvalidScopeStack(stack));
         }
@@ -769,10 +781,10 @@ impl Tokenizer {
         }
         let parent_start = parent as usize * theme_count;
         let start = index * theme_count;
-        let path = self.scopes.path(stack);
+        self.scopes.fill_path(stack, &mut self.scope_path);
         for (theme_index, theme) in self.themes.iter().enumerate() {
             self.style_rows[start + theme_index] = theme.resolve_scope(
-                &path,
+                &self.scope_path,
                 self.style_rows[parent_start + theme_index],
             );
         }

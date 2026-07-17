@@ -113,11 +113,18 @@ let mut second = engine.session("rust")?;
 `Highlighter` exposes representations for different integration costs:
 
 - `tokenize_line` for incremental documents;
+- `tokenize_line_into` for allocation-reusing streaming tokenization;
+- `token_styles` for borrowed multi-theme style resolution;
 - `code_to_scope_tokens` for source ranges and compact scope IDs;
 - `code_to_tokens` for owned tokens resolved against one theme;
 - `code_to_tokens_with_themes` for every configured theme;
 - `code_to_html` and `code_to_html_with_options` for streaming HTML;
 - `render` for a custom `Renderer` implementation.
+
+`split_lines`, `ThemeInfo`, and `ansi::AnsiParser` expose the same line,
+theme, and ANSI primitives used by the built-in renderer. Internal grammar IR
+and tokenizer storage stay private so custom renderers do not depend on cache
+layout details.
 
 Scope names can be recovered from `ScopeStackId` when diagnostics or semantic
 inspection needs them. `cache_stats`, `clear_language_cache`, and

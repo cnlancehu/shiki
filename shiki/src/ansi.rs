@@ -5,19 +5,25 @@ use std::{
 
 use crate::{FontStyle, theme::Theme};
 
-pub(crate) fn is_ansi(language: &str) -> bool {
+/// Returns whether `language` selects Shiki's ANSI control-sequence parser.
+pub fn is_ansi(language: &str) -> bool {
     matches!(language, "ansi")
 }
 
+/// A color selected by an ANSI SGR control sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AnsiColor {
+pub enum AnsiColor {
+    /// One of the theme's 16 ANSI colors.
     Indexed(u8),
+    /// An entry in the xterm 256-color palette.
     Palette(u8),
+    /// A 24-bit color.
     Rgb(u8, u8, u8),
 }
 
+/// ANSI styling active at a point in the input stream.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct AnsiState {
+pub struct AnsiState {
     foreground: Option<AnsiColor>,
     background: Option<AnsiColor>,
     font_style: FontStyle,
@@ -26,30 +32,100 @@ pub(crate) struct AnsiState {
 }
 
 impl AnsiState {
-    pub(crate) const fn has_explicit_style(self) -> bool {
+    pub const fn foreground(self) -> Option<AnsiColor> {
+        self.foreground
+    }
+
+    pub const fn background(self) -> Option<AnsiColor> {
+        self.background
+    }
+
+    pub const fn font_style(self) -> FontStyle {
+        self.font_style
+    }
+
+    pub const fn is_dim(self) -> bool {
+        self.dim
+    }
+
+    pub const fn is_reverse(self) -> bool {
+        self.reverse
+    }
+
+    pub const fn has_explicit_style(self) -> bool {
         self.foreground.is_some()
             || self.background.is_some()
             || self.font_style.bits() != 0
             || self.dim
             || self.reverse
     }
+
+    /// Resolves this ANSI state against a theme palette.
+    pub fn resolve(self, theme: &Theme) -> ResolvedAnsiStyle {
+        resolve_style(theme, self)
+    }
 }
 
+/// A visible byte range and the ANSI state that applies to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AnsiSpan {
+pub struct AnsiSpan {
     pub range: Range<usize>,
     pub state: AnsiState,
 }
 
+/// ANSI styling resolved to concrete theme colors.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ResolvedAnsiStyle {
+pub struct ResolvedAnsiStyle {
     pub color: Arc<str>,
     pub background: Option<Arc<str>>,
     pub font_style: FontStyle,
     pub explicit: bool,
 }
 
-pub(crate) fn parse_line(
+/// Stateful, allocation-reusing ANSI line parser for custom renderers.
+#[derive(Debug, Default)]
+pub struct AnsiParser {
+    state: AnsiState,
+    spans: Vec<AnsiSpan>,
+}
+
+impl AnsiParser {
+    pub const fn new() -> Self {
+        Self {
+            state: AnsiState {
+                foreground: None,
+                background: None,
+                font_style: FontStyle::from_bits(0),
+                dim: false,
+                reverse: false,
+            },
+            spans: Vec::new(),
+        }
+    }
+
+    /// Parses one source line and reuses the parser's span allocation.
+    ///
+    /// SGR state is retained for the next line. The returned ranges index the
+    /// exact `line` passed to this call and omit control sequences.
+    pub fn parse_line(&mut self, line: &str) -> &[AnsiSpan] {
+        parse_line(line, &mut self.state, &mut self.spans);
+        &self.spans
+    }
+
+    pub const fn state(&self) -> AnsiState {
+        self.state
+    }
+
+    pub fn reset(&mut self) {
+        self.state = AnsiState::default();
+        self.spans.clear();
+    }
+}
+
+/// Parses one ANSI line into a caller-owned reusable buffer.
+///
+/// `state` is updated in place so SGR styles can continue across lines.
+pub fn parse_line(
     line: &str,
     state: &mut AnsiState,
     output: &mut Vec<AnsiSpan>,
@@ -269,10 +345,8 @@ fn clear_font_style(style: &mut FontStyle, value: FontStyle) {
     *style = FontStyle::from_bits(style.bits() & !value.bits());
 }
 
-pub(crate) fn resolve_style(
-    theme: &Theme,
-    state: AnsiState,
-) -> ResolvedAnsiStyle {
+/// Resolves an ANSI state against a theme palette.
+pub fn resolve_style(theme: &Theme, state: AnsiState) -> ResolvedAnsiStyle {
     let (foreground, background) = if state.reverse {
         (
             state

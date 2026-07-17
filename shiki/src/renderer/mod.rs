@@ -6,9 +6,10 @@ pub use html::{HtmlOptions, HtmlRenderer};
 
 /// Renders highlighted source code into a concrete output format.
 ///
-/// Renderers may use the high-level token APIs on [`Highlighter`]. Renderers
-/// implemented by this crate can additionally use its streaming internals to
-/// avoid materializing owned tokens.
+/// Custom renderers can use [`Highlighter::tokenize_line_into`] with a reused
+/// token buffer and [`Highlighter::token_styles`] to stream output without
+/// materializing an owned themed-token document. ANSI renderers can use
+/// [`crate::ansi::AnsiParser`] directly.
 pub trait Renderer {
     type Output;
 

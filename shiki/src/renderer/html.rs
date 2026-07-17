@@ -2,10 +2,7 @@ use std::{collections::BTreeMap, fmt::Write};
 
 use crate::{
     FontStyle, Highlighter, Result,
-    ansi::{
-        AnsiState, ResolvedAnsiStyle, parse_line as parse_ansi_line,
-        resolve_style as resolve_ansi_style,
-    },
+    ansi::{AnsiParser, ResolvedAnsiStyle},
     highlighter::{NamedTheme, split_lines},
     renderer::Renderer,
     theme::Style,
@@ -91,7 +88,7 @@ impl HtmlOptions {
             include_root_style: false,
             include_background: false,
             include_foreground: false,
-            include_default_theme_styles: true,
+            include_default_theme_styles: false,
             include_token_styles: true,
         }
     }
@@ -261,29 +258,20 @@ fn render_html(
         .as_mut()
         .expect("initialized tokenizer");
     let mut state = None;
+    let mut line = Vec::new();
+    let mut run_styles = Vec::with_capacity(themes.len());
     for (line_index, source) in split_lines(code).enumerate() {
-        let (line, next) = tokenizer.tokenize_line_owned(
+        let next = tokenizer.tokenize_line_into_owned(
             source,
             state.take(),
             line_index == 0,
+            &mut line,
         )?;
         state = Some(next);
-        if line_index > 0 {
-            output.push('\n');
-        }
-        if options.include_line_wrapper {
-            open_tag(
-                &mut output,
-                "span",
-                options.line_class.as_deref(),
-                &BTreeMap::new(),
-                &[],
-                None,
-            );
-        }
+        open_line(&mut output, line_index, options);
+        run_styles.clear();
         let mut run_start = 0;
         let mut run_end = 0;
-        let mut run_styles = Vec::with_capacity(themes.len());
         for token in &line {
             let styles = tokenizer.styles(token.scopes);
             if !run_styles.is_empty()
@@ -320,9 +308,7 @@ fn render_html(
                 options,
             );
         }
-        if options.include_line_wrapper {
-            output.push_str("</span>");
-        }
+        close_line(&mut output, options);
     }
     output.push_str("</code></pre>");
     Ok(output)
@@ -336,30 +322,14 @@ fn write_ansi_lines(
     multiple: bool,
     options: &HtmlOptions,
 ) {
-    let mut state = AnsiState::default();
-    let mut spans = Vec::new();
+    let mut parser = AnsiParser::new();
     let mut styles = Vec::with_capacity(themes.len());
     for (line_index, source) in split_lines(code).enumerate() {
-        if line_index > 0 {
-            output.push('\n');
-        }
-        if options.include_line_wrapper {
-            open_tag(
-                output,
-                "span",
-                options.line_class.as_deref(),
-                &BTreeMap::new(),
-                &[],
-                None,
-            );
-        }
-        parse_ansi_line(source, &mut state, &mut spans);
-        for span in &spans {
+        open_line(output, line_index, options);
+        for span in parser.parse_line(source) {
             styles.clear();
             styles.extend(
-                themes
-                    .iter()
-                    .map(|theme| resolve_ansi_style(&theme.theme, span.state)),
+                themes.iter().map(|theme| span.state.resolve(&theme.theme)),
             );
             write_token_run(
                 output,
@@ -371,9 +341,31 @@ fn write_ansi_lines(
                 options,
             );
         }
-        if options.include_line_wrapper {
-            output.push_str("</span>");
-        }
+        close_line(output, options);
+    }
+}
+
+#[inline]
+fn open_line(output: &mut String, line_index: usize, options: &HtmlOptions) {
+    if line_index > 0 {
+        output.push('\n');
+    }
+    if !options.include_line_wrapper {
+        return;
+    }
+    output.push_str("<span");
+    if let Some(class) = options.line_class.as_deref() {
+        output.push_str(" class=\"");
+        push_escaped_attr(output, class);
+        output.push('"');
+    }
+    output.push('>');
+}
+
+#[inline]
+fn close_line(output: &mut String, options: &HtmlOptions) {
+    if options.include_line_wrapper {
+        output.push_str("</span>");
     }
 }
 
