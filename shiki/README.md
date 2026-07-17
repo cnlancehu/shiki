@@ -64,6 +64,26 @@ let mut highlighter = shiki::Highlighter::builder()
     .build()?;
 ```
 
+## ANSI terminal output
+
+The reserved `ansi` language converts terminal SGR sequences to themed tokens
+and HTML without requiring a TextMate grammar:
+
+```rust,ignore
+let html = highlighter.code_to_html(
+    "\x1b[1;32mcompleted\x1b[0m in 12ms",
+    "ansi",
+)?;
+```
+
+It supports the standard and bright theme palettes, 256-color and TrueColor
+sequences, foreground/background colors, reverse video, dim, bold, italic,
+underline, strikethrough, and state spanning multiple lines. Theme JSON
+`terminal.ansi*` colors are retained in runtime and precompiled engines;
+VS Code-compatible colors are used when a theme omits them. Owned ANSI tokens
+have no TextMate scopes and use scope ID `0`; the scope-token and incremental
+grammar APIs remain specific to TextMate languages.
+
 Build a shared engine when several documents need the same immutable grammar
 and theme data:
 

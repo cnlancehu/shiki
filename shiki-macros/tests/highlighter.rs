@@ -87,3 +87,17 @@ fn snapshot_roundtrip_is_deterministic() {
     assert_eq!(restored.language_count(), engine.language_count());
     assert_eq!(restored.__to_snapshot(), snapshot);
 }
+
+#[test]
+fn precompiled_themes_keep_their_ansi_palette() {
+    let mut highlighter = highlighter! {
+        languages: ["ansi"],
+        themes: [("dark", "catppuccin-mocha")],
+    };
+    let html = highlighter
+        .code_to_html("\x1b[31merror\x1b[0m", "ansi")
+        .unwrap();
+
+    assert!(!html.contains('\x1b'), "{html}");
+    assert!(html.contains("color:#f38ba8"), "{html}");
+}

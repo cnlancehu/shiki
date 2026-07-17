@@ -2,6 +2,10 @@ use std::{collections::BTreeMap, fmt::Write};
 
 use crate::{
     FontStyle, Highlighter, Result,
+    ansi::{
+        AnsiState, ResolvedAnsiStyle, parse_line as parse_ansi_line,
+        resolve_style as resolve_ansi_style,
+    },
     highlighter::{NamedTheme, split_lines},
     renderer::Renderer,
     theme::Style,
@@ -123,8 +127,13 @@ fn render_html(
     language: &str,
     options: &HtmlOptions,
 ) -> Result<String> {
-    let language = highlighter.language_index(language)?;
-    highlighter.ensure_tokenizer(language);
+    let language = if crate::ansi::is_ansi(language) {
+        None
+    } else {
+        let language = highlighter.language_index(language)?;
+        highlighter.ensure_tokenizer(language);
+        Some(language)
+    };
     let default_index = options
         .default_theme
         .as_deref()
@@ -236,6 +245,18 @@ fn render_html(
         None,
     );
     let themes = &highlighter.engine.inner.themes;
+    let Some(language) = language else {
+        write_ansi_lines(
+            &mut output,
+            code,
+            themes,
+            default_index,
+            multiple,
+            options,
+        );
+        output.push_str("</code></pre>");
+        return Ok(output);
+    };
     let tokenizer = highlighter.tokenizers[language]
         .as_mut()
         .expect("initialized tokenizer");
@@ -307,6 +328,55 @@ fn render_html(
     Ok(output)
 }
 
+fn write_ansi_lines(
+    output: &mut String,
+    code: &str,
+    themes: &[NamedTheme],
+    default_index: usize,
+    multiple: bool,
+    options: &HtmlOptions,
+) {
+    let mut state = AnsiState::default();
+    let mut spans = Vec::new();
+    let mut styles = Vec::with_capacity(themes.len());
+    for (line_index, source) in split_lines(code).enumerate() {
+        if line_index > 0 {
+            output.push('\n');
+        }
+        if options.include_line_wrapper {
+            open_tag(
+                output,
+                "span",
+                options.line_class.as_deref(),
+                &BTreeMap::new(),
+                &[],
+                None,
+            );
+        }
+        parse_ansi_line(source, &mut state, &mut spans);
+        for span in &spans {
+            styles.clear();
+            styles.extend(
+                themes
+                    .iter()
+                    .map(|theme| resolve_ansi_style(&theme.theme, span.state)),
+            );
+            write_token_run(
+                output,
+                &source[span.range.clone()],
+                &styles,
+                themes,
+                default_index,
+                multiple,
+                options,
+            );
+        }
+        if options.include_line_wrapper {
+            output.push_str("</span>");
+        }
+    }
+}
+
 fn styles_equivalent(
     left: &[Style],
     right: &[Style],
@@ -330,10 +400,54 @@ fn styles_equivalent(
             })
 }
 
-fn write_token_run(
+trait VisualStyle {
+    fn color<'a>(&'a self, theme: &'a NamedTheme) -> &'a str;
+    fn background<'a>(&'a self, theme: &'a NamedTheme) -> Option<&'a str>;
+    fn font_style(&self) -> FontStyle;
+    fn explicit(&self) -> bool {
+        false
+    }
+}
+
+impl VisualStyle for Style {
+    fn color<'a>(&'a self, theme: &'a NamedTheme) -> &'a str {
+        theme.theme.color(
+            self.foreground
+                .unwrap_or_else(|| theme.theme.foreground_id()),
+        )
+    }
+
+    fn background<'a>(&'a self, theme: &'a NamedTheme) -> Option<&'a str> {
+        self.background.map(|color| theme.theme.color(color))
+    }
+
+    fn font_style(&self) -> FontStyle {
+        self.font_style.unwrap_or_default()
+    }
+}
+
+impl VisualStyle for ResolvedAnsiStyle {
+    fn color<'a>(&'a self, _theme: &'a NamedTheme) -> &'a str {
+        &self.color
+    }
+
+    fn background<'a>(&'a self, _theme: &'a NamedTheme) -> Option<&'a str> {
+        self.background.as_deref()
+    }
+
+    fn font_style(&self) -> FontStyle {
+        self.font_style
+    }
+
+    fn explicit(&self) -> bool {
+        self.explicit
+    }
+}
+
+fn write_token_run<S: VisualStyle>(
     output: &mut String,
     content: &str,
-    styles: &[Style],
+    styles: &[S],
     themes: &[NamedTheme],
     default_index: usize,
     multiple: bool,
@@ -344,9 +458,10 @@ fn write_token_run(
         return;
     }
     let unstyled_whitespace = content.chars().all(char::is_whitespace)
-        && styles.iter().all(|style| {
-            style.background.is_none()
-                && style.font_style.unwrap_or_default() == FontStyle::default()
+        && styles.iter().zip(themes).all(|(style, theme)| {
+            !style.explicit()
+                && style.background(theme).is_none()
+                && style.font_style() == FontStyle::default()
         });
     if unstyled_whitespace {
         push_escaped_html(output, content);
@@ -366,61 +481,48 @@ fn write_token_run(
     output.push_str("</span>");
 }
 
-fn write_token_style(
+fn write_token_style<S: VisualStyle>(
     output: &mut String,
-    styles: &[Style],
+    styles: &[S],
     themes: &[NamedTheme],
     default_index: usize,
     multiple: bool,
     include_default_theme_styles: bool,
 ) {
     if !multiple {
-        let style = styles[0];
-        let color = themes[0].theme.color(
-            style
-                .foreground
-                .unwrap_or_else(|| themes[0].theme.foreground_id()),
-        );
+        let style = &styles[0];
+        let color = style.color(&themes[0]);
         output.push_str("color:");
         push_escaped_attr(output, color);
         output.push(';');
-        if let Some(background) = style.background {
+        if let Some(background) = style.background(&themes[0]) {
             output.push_str("background-color:");
-            push_escaped_attr(output, themes[0].theme.color(background));
+            push_escaped_attr(output, background);
             output.push(';');
         }
-        write_font_style(output, style.font_style.unwrap_or_default(), "");
+        write_font_style(output, style.font_style(), "");
         return;
     }
 
     let mut has_background = false;
     for (theme, style) in themes.iter().zip(styles) {
-        let color = theme.theme.color(
-            style
-                .foreground
-                .unwrap_or_else(|| theme.theme.foreground_id()),
-        );
+        let color = style.color(theme);
         write!(output, "--{}:", theme.css_name).expect("write to String");
         push_escaped_attr(output, color);
         output.push(';');
-        if let Some(background) = style.background {
+        if let Some(background) = style.background(theme) {
             has_background = true;
             write!(output, "--{}-bg:", theme.css_name)
                 .expect("write to String");
-            push_escaped_attr(output, theme.theme.color(background));
+            push_escaped_attr(output, background);
             output.push(';');
         }
-        write_font_variables(
-            output,
-            &theme.css_name,
-            style.font_style.unwrap_or_default(),
-        );
+        write_font_variables(output, &theme.css_name, style.font_style());
     }
     let default = &themes[default_index].css_name;
     if include_default_theme_styles {
         write!(output, "color:var(--{default});").expect("write to String");
-        let default_font_style =
-            styles[default_index].font_style.unwrap_or_default();
+        let default_font_style = styles[default_index].font_style();
         if default_font_style.contains(FontStyle::ITALIC) {
             write!(output, "font-style:var(--{default}-font-style);")
                 .expect("write to String");

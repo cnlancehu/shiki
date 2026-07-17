@@ -73,6 +73,27 @@ let html = highlighter.code_to_html(user_source, "text")?;
 This fallback is always available, including in engines generated without an
 explicit plain-text entry.
 
+### ANSI terminal output
+
+`ansi` is also a built-in special language and does not require a grammar
+bundle. ANSI control sequences are removed and their visual state is rendered
+with the selected theme's `terminal.ansi*` palette (or VS Code-compatible
+fallbacks):
+
+```rust
+let html = highlighter.code_to_html(
+    "\x1b[1;32mcompleted\x1b[0m in 12ms",
+    "ansi",
+)?;
+```
+
+Standard and bright colors, 256-color and TrueColor sequences, foreground and
+background colors, reverse video, dim text, bold, italic, underline, and
+strikethrough are supported. ANSI state is retained across source lines and
+works with both single-theme and multi-theme HTML. `code_to_tokens` and
+`code_to_tokens_with_themes` also accept `ansi`; those tokens have no TextMate
+scope stack and use scope ID `0`.
+
 `languages!` accepts generated identifiers and aliases. It also includes every
 transitive grammar dependency required by the selected roots. For example,
 selecting Vue includes the grammars injected into Vue documents.
@@ -232,8 +253,8 @@ release them with `clear_language_cache` or `clear_all_caches`.
 ## Custom renderers
 
 `Renderer` separates tokenization from output. `HtmlRenderer` is the built-in
-streaming implementation; ANSI, structured data, or application-specific
-renderers can implement the same trait.
+streaming implementation; structured data or application-specific renderers
+can implement the same trait.
 
 ```rust
 use shiki::{Highlighter, Renderer};

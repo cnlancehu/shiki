@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+mod ansi;
 mod definition;
 mod error;
 mod grammar;

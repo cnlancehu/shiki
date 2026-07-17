@@ -4,7 +4,10 @@ use std::{
     ffi::CStr,
     ops::Range,
     ptr,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use crate::{
@@ -191,6 +194,7 @@ struct Frame {
 #[derive(Debug, Clone, Default)]
 pub struct GrammarState {
     grammar: u64,
+    tokenizer: u64,
     stack: Vec<Frame>,
 }
 
@@ -314,6 +318,7 @@ struct Retokenize {
 pub struct Tokenizer {
     grammar: Arc<CompiledGrammar>,
     grammar_id: u64,
+    tokenizer_id: u64,
     regex_limits: RegexLimits,
     scanner_ids: HashMap<ScannerKey, ScannerId>,
     scanners: Vec<Scanner>,
@@ -331,6 +336,8 @@ pub struct Tokenizer {
     line_buffers: Vec<String>,
     capture_buffers: Vec<Vec<Option<Range<usize>>>>,
 }
+
+static NEXT_TOKENIZER_ID: AtomicU64 = AtomicU64::new(1);
 
 impl Tokenizer {
     pub fn new(
@@ -356,6 +363,7 @@ impl Tokenizer {
         Self {
             grammar,
             grammar_id,
+            tokenizer_id: NEXT_TOKENIZER_ID.fetch_add(1, Ordering::Relaxed),
             regex_limits,
             scanner_ids: HashMap::new(),
             scanners: Vec::new(),
@@ -378,6 +386,7 @@ impl Tokenizer {
     pub fn initial_state(&self) -> GrammarState {
         GrammarState {
             grammar: self.grammar_id,
+            tokenizer: self.tokenizer_id,
             stack: vec![Frame {
                 rule: self.grammar.root,
                 scopes: self.root_scope,
@@ -389,6 +398,16 @@ impl Tokenizer {
                 while_scanner: NO_SCANNER,
             }],
         }
+    }
+
+    pub(crate) fn validate_state(&self, state: &GrammarState) -> Result<()> {
+        if !state.stack.is_empty()
+            && (state.grammar != self.grammar_id
+                || state.tokenizer != self.tokenizer_id)
+        {
+            return Err(Error::GrammarStateMismatch);
+        }
+        Ok(())
     }
 
     pub fn cache_stats(&self) -> TokenizerCacheStats {
@@ -434,9 +453,7 @@ impl Tokenizer {
     ) -> Result<(Vec<ScopeToken>, GrammarState)> {
         let mut tokens = Vec::new();
         let mut state = previous.unwrap_or_else(|| self.initial_state());
-        if !state.stack.is_empty() && state.grammar != self.grammar_id {
-            return Err(Error::GrammarStateMismatch);
-        }
+        self.validate_state(&state)?;
         if state.stack.is_empty() {
             state = self.initial_state();
         }
@@ -478,6 +495,7 @@ impl Tokenizer {
                 emit(&mut tokens, position, line.len(), frame.content_scopes);
                 break;
             };
+            clamp_captures(&mut captures, line.len());
             let Some(full) = captures.first().and_then(Clone::clone) else {
                 break;
             };
@@ -810,6 +828,7 @@ impl Tokenizer {
                 state.stack.truncate(frame_index);
                 break;
             }
+            clamp_captures(captures, text.len().saturating_sub(1));
             let full = captures[0].clone().unwrap();
             if full.start != *position {
                 state.stack.truncate(frame_index);
@@ -1115,6 +1134,7 @@ impl Tokenizer {
             let fragment = &text[task.range.clone()];
             let state = GrammarState {
                 grammar: self.grammar_id,
+                tokenizer: self.tokenizer_id,
                 stack: vec![Frame {
                     rule: task.rule,
                     scopes: task.scopes,
@@ -1303,6 +1323,13 @@ fn copy_captures(
         captures.push(
             (begin >= 0 && end >= 0).then_some(begin as usize..end as usize),
         );
+    }
+}
+
+fn clamp_captures(captures: &mut [Option<Range<usize>>], limit: usize) {
+    for range in captures.iter_mut().flatten() {
+        range.start = range.start.min(limit);
+        range.end = range.end.min(limit);
     }
 }
 

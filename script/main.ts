@@ -151,6 +151,7 @@ macro_rules! __language_group {
     (text) => { &[] };
     (txt) => { &[] };
     (plain) => { &[] };
+    (ansi) => { &[] };
 ${macroArms.join("\n")}
 }
 

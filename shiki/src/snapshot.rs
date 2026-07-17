@@ -16,7 +16,7 @@ use crate::{
     tokenizer::RegexLimits,
 };
 
-const MAGIC: &[u8; 8] = b"SHIKI\0\x04\0";
+const MAGIC: &[u8; 8] = b"SHIKI\0\x05\0";
 
 #[derive(Clone)]
 enum SnapshotSource {
@@ -578,6 +578,7 @@ impl Writer {
             self.string(strings, color);
         }
         self.u32(theme.foreground_id.0);
+        self.u32_slice(&theme.ansi_colors.map(|color| color.0));
         self.len(theme.selectors.len());
         for selector in &theme.selectors {
             self.string(strings, selector);
@@ -857,6 +858,15 @@ impl<'a> Reader<'a> {
         let background = self.string(strings)?;
         let colors = self.vec(|reader| reader.string(strings))?;
         let foreground_id = ColorId(self.u32()?);
+        let ansi_colors: [ColorId; 16] = self
+            .u32_vec()?
+            .into_iter()
+            .map(ColorId)
+            .collect::<Vec<_>>()
+            .try_into()
+            .map_err(|_| {
+                SnapshotError("snapshot has an invalid ANSI palette")
+            })?;
         let selectors = self.vec(|reader| reader.string(strings))?;
         let rules = self.vec(|reader| {
             Ok(ThemeRule {
@@ -867,9 +877,13 @@ impl<'a> Reader<'a> {
                 order: reader.index()?,
             })
         })?;
-        if foreground_id.0 as usize >= colors.len() {
+        if foreground_id.0 as usize >= colors.len()
+            || ansi_colors
+                .iter()
+                .any(|color| color.0 as usize >= colors.len())
+        {
             return Err(SnapshotError(
-                "snapshot contains an invalid foreground color ID",
+                "snapshot contains an invalid theme color ID",
             ));
         }
         Ok(Theme {
@@ -878,6 +892,7 @@ impl<'a> Reader<'a> {
             background,
             colors,
             foreground_id,
+            ansi_colors,
             selectors,
             rules,
         })

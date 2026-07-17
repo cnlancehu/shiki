@@ -63,6 +63,7 @@ pub struct Theme {
     pub background: Arc<str>,
     pub colors: Vec<Arc<str>>,
     pub foreground_id: ColorId,
+    pub ansi_colors: [ColorId; 16],
     pub selectors: Vec<Arc<str>>,
     pub rules: Vec<ThemeRule>,
 }
@@ -168,12 +169,21 @@ impl Theme {
             intern_color(&mut colors, &mut color_ids, &foreground);
         let background_id =
             intern_color(&mut colors, &mut color_ids, &background);
+        let ansi_colors = std::array::from_fn(|index| {
+            let color = raw
+                .colors
+                .get(ANSI_COLOR_KEYS[index])
+                .map(AsRef::as_ref)
+                .unwrap_or(DEFAULT_ANSI_COLORS[index]);
+            intern_color(&mut colors, &mut color_ids, color)
+        });
         Self {
             name: Arc::from(raw.name.as_deref().unwrap_or(name)),
             foreground: colors[foreground_id.index()].clone(),
             background: colors[background_id.index()].clone(),
             colors,
             foreground_id,
+            ansi_colors,
             selectors,
             rules,
         }
@@ -199,6 +209,10 @@ impl Theme {
         self.foreground_id
     }
 
+    pub fn ansi_color(&self, index: u8) -> &str {
+        self.color(self.ansi_colors[usize::from(index.min(15))])
+    }
+
     pub fn matcher(self: &Arc<Self>) -> ThemeMatcher {
         ThemeMatcher {
             theme: self.clone(),
@@ -207,6 +221,31 @@ impl Theme {
         }
     }
 }
+
+const ANSI_COLOR_KEYS: [&str; 16] = [
+    "terminal.ansiBlack",
+    "terminal.ansiRed",
+    "terminal.ansiGreen",
+    "terminal.ansiYellow",
+    "terminal.ansiBlue",
+    "terminal.ansiMagenta",
+    "terminal.ansiCyan",
+    "terminal.ansiWhite",
+    "terminal.ansiBrightBlack",
+    "terminal.ansiBrightRed",
+    "terminal.ansiBrightGreen",
+    "terminal.ansiBrightYellow",
+    "terminal.ansiBrightBlue",
+    "terminal.ansiBrightMagenta",
+    "terminal.ansiBrightCyan",
+    "terminal.ansiBrightWhite",
+];
+
+const DEFAULT_ANSI_COLORS: [&str; 16] = [
+    "#000000", "#cd3131", "#0DBC79", "#E5E510", "#2472C8", "#BC3FBC",
+    "#11A8CD", "#E5E5E5", "#666666", "#F14C4C", "#23D18B", "#F5F543",
+    "#3B8EEA", "#D670D6", "#29B8DB", "#FFFFFF",
+];
 
 impl ThemeMatcher {
     pub fn scope_count(&self) -> usize {

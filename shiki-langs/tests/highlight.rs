@@ -1,6 +1,7 @@
 use shiki::{Highlighter, HtmlOptions, LanguageBundle, Renderer};
 
-static LANGUAGES: LanguageBundle = shiki_langs::languages![astro, rust, vue];
+static LANGUAGES: LanguageBundle =
+    shiki_langs::languages![astro, markdown, rust, vue];
 
 #[test]
 fn highlights_rust_to_html() {
@@ -153,6 +154,131 @@ fn rust_function_and_string_use_distinct_theme_rules() {
         .find(|token| token.content == "name")
         .unwrap();
     assert_ne!(function.color, string.color);
+}
+
+#[test]
+fn markdown_fenced_rust_uses_embedded_grammar() {
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["markdown"])
+        .themes([
+            ("light", &shiki_themes::CATPPUCCIN_LATTE),
+            ("dark", &shiki_themes::CATPPUCCIN_MOCHA),
+        ])
+        .build()
+        .unwrap();
+    let source =
+        "```rust\nfn main() {\n    println!(\"Hello, world!\");\n}\n```";
+    let lines = highlighter
+        .code_to_scope_tokens(source, "markdown")
+        .unwrap();
+    let rust_line = "fn main() {";
+    let scoped = lines[1]
+        .iter()
+        .map(|token| {
+            (
+                &rust_line[token.range.clone()],
+                highlighter.scope_names("markdown", token.scopes).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        scoped.iter().any(|(content, scopes)| {
+            *content == "fn"
+                && scopes.iter().any(|scope| scope == "keyword.other.fn.rust")
+        }),
+        "{scoped:#?}"
+    );
+    assert!(
+        scoped.iter().any(|(content, scopes)| {
+            *content == "main"
+                && scopes
+                    .iter()
+                    .any(|scope| scope == "entity.name.function.rust")
+        }),
+        "{scoped:#?}"
+    );
+
+    let html = highlighter.code_to_html(source, "markdown").unwrap();
+    assert!(html.contains("--light:#8839ef;--dark:#cba6f7"), "{html}");
+    assert!(html.contains("--light:#1e66f5;--light-font-style:italic;--dark:#89b4fa;--dark-font-style:italic"), "{html}");
+}
+
+#[test]
+fn renders_ansi_with_theme_palette_and_decorations() {
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["ansi"])
+        .themes([
+            ("light", &shiki_themes::CATPPUCCIN_LATTE),
+            ("dark", &shiki_themes::CATPPUCCIN_MOCHA),
+        ])
+        .build()
+        .unwrap();
+    let source = concat!(
+        "plain ",
+        "\x1b[1;3;4;9;31;43mstyled\x1b[0m ",
+        "\x1b[38;2;1;2;3;48;5;24mtruecolor\x1b[0m"
+    );
+    let html = highlighter.code_to_html(source, "ansi").unwrap();
+
+    assert!(!html.contains('\x1b'), "{html}");
+    assert!(html.contains("--light:#d20f39"), "{html}");
+    assert!(html.contains("--dark:#f38ba8"), "{html}");
+    assert!(html.contains("--light-bg:#df8e1d"), "{html}");
+    assert!(html.contains("--dark-bg:#f9e2af"), "{html}");
+    assert!(html.contains("--light:#010203"), "{html}");
+    assert!(html.contains("--dark:#010203"), "{html}");
+    assert!(html.contains("#005f87"), "{html}");
+    assert!(html.contains("font-style:italic"), "{html}");
+    assert!(html.contains("font-weight:bold"), "{html}");
+    assert!(html.contains("underline line-through"), "{html}");
+
+    let tokens = highlighter.code_to_tokens(source, "ansi").unwrap();
+    assert_eq!(
+        tokens[0]
+            .iter()
+            .map(|token| token.content.as_str())
+            .collect::<String>(),
+        "plain styled truecolor"
+    );
+    let styled = tokens[0]
+        .iter()
+        .find(|token| token.content == "styled")
+        .unwrap();
+    assert_eq!(&*styled.color, "#d20f39");
+    assert_eq!(styled.background.as_deref(), Some("#df8e1d"));
+    assert!(styled.font_style.contains(shiki::FontStyle::BOLD));
+    assert!(styled.font_style.contains(shiki::FontStyle::ITALIC));
+    assert!(styled.font_style.contains(shiki::FontStyle::UNDERLINE));
+    assert!(styled.font_style.contains(shiki::FontStyle::STRIKETHROUGH));
+}
+
+#[test]
+fn ansi_state_crosses_lines_and_supports_reverse_and_dim() {
+    let mut highlighter = Highlighter::builder()
+        .languages(["ansi"])
+        .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+        .build()
+        .unwrap();
+    let source =
+        "\x1b[32mfirst\nsecond\x1b[0m \x1b[2;31mdim\x1b[0m \x1b[7;34mreverse";
+    let lines = highlighter.code_to_tokens(source, "ansi").unwrap();
+
+    assert_eq!(&*lines[0][0].color, "#a6e3a1");
+    assert_eq!(&*lines[1][0].color, "#a6e3a1");
+    let dim = lines[1]
+        .iter()
+        .find(|token| token.content == "dim")
+        .unwrap();
+    assert_eq!(&*dim.color, "#f38ba880");
+    let reverse = lines[1]
+        .iter()
+        .find(|token| token.content == "reverse")
+        .unwrap();
+    assert_eq!(&*reverse.color, "#1e1e2e");
+    assert_eq!(reverse.background.as_deref(), Some("#89b4fa"));
 }
 
 #[test]
@@ -516,6 +642,22 @@ fn generated_items_are_reexported() {
 }
 
 #[test]
+fn ansi_is_available_as_a_special_language_bundle() {
+    static ANSI: LanguageBundle = shiki_langs::languages![ansi];
+    let mut highlighter = Highlighter::builder()
+        .bundle(&ANSI)
+        .theme(&shiki_themes::MIN_DARK)
+        .build()
+        .unwrap();
+    let tokens = highlighter
+        .code_to_tokens("\x1b[31mred\x1b[0m", "ansi")
+        .unwrap();
+
+    assert_eq!(tokens[0][0].content, "red");
+    assert_eq!(&*tokens[0][0].color, "#cd3131");
+}
+
+#[test]
 fn loads_runtime_json_and_raw_definitions() {
     const GRAMMAR: &str = r#"{
         "scopeName": "source.runtime",
@@ -571,6 +713,51 @@ fn rejects_state_from_another_language() {
         .unwrap();
     let error = highlighter
         .tokenize_line("const value = 1", "astro", Some(&rust_state), true)
+        .unwrap_err();
+    assert!(matches!(error, shiki::Error::GrammarStateMismatch));
+}
+
+#[test]
+fn rejects_state_from_another_same_language_session() {
+    let engine = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .theme(&shiki_themes::generated::GITHUB_DARK)
+        .build_engine()
+        .unwrap();
+    let mut first = engine.session("rust").unwrap();
+    let mut second = engine.session("rust").unwrap();
+    let mut foreign_state = first.initial_state();
+
+    first
+        .tokenize_line("/* open", &mut foreign_state, true)
+        .unwrap();
+
+    let error = second
+        .tokenize_line("let value = 1;", &mut foreign_state, true)
+        .unwrap_err();
+    assert!(matches!(error, shiki::Error::GrammarStateMismatch));
+    let continued = first
+        .tokenize_line("close */ let value = 1;", &mut foreign_state, false)
+        .unwrap();
+    assert!(continued.len() > 1, "{continued:#?}");
+}
+
+#[test]
+fn rejects_state_after_clearing_language_cache() {
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .theme(&shiki_themes::generated::GITHUB_DARK)
+        .build()
+        .unwrap();
+    let (_, stale_state) = highlighter
+        .tokenize_line("/* open", "rust", None, true)
+        .unwrap();
+    highlighter.clear_language_cache("rust").unwrap();
+
+    let error = highlighter
+        .tokenize_line("close */", "rust", Some(&stale_state), false)
         .unwrap_err();
     assert!(matches!(error, shiki::Error::GrammarStateMismatch));
 }

@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::{
+    ansi::is_ansi,
     error::{Error, Result},
     grammar::RawGrammar,
     theme::{RawTheme, Theme},
@@ -136,7 +137,7 @@ impl LanguageBundle {
         } else {
             selected
                 .iter()
-                .filter(|id| !is_plain_text(id))
+                .filter(|id| !is_plain_text(id) && !is_ansi(id))
                 .map(|id| {
                     by_name
                         .get(id.as_str())

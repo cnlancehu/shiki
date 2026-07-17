@@ -7,6 +7,10 @@ use std::{
 };
 
 use crate::{
+    ansi::{
+        AnsiState, parse_line as parse_ansi_line,
+        resolve_style as resolve_ansi_style,
+    },
     definition::{LanguageBundle, ThemeDefinition, is_plain_text},
     error::{Error, Result},
     grammar::{RawGrammar, compile, compile_plain_text},
@@ -309,6 +313,9 @@ impl Highlighter {
         code: &str,
         language: &str,
     ) -> Result<Vec<Vec<ThemedToken>>> {
+        if crate::ansi::is_ansi(language) {
+            return Ok(self.code_to_ansi_tokens(code));
+        }
         let tokens = self.code_to_scope_tokens(code, language)?;
         let language = self.language_index(language)?;
         let theme = &self.engine.inner.themes[0].theme;
@@ -344,6 +351,9 @@ impl Highlighter {
         code: &str,
         language: &str,
     ) -> Result<Vec<Vec<MultiThemedToken>>> {
+        if crate::ansi::is_ansi(language) {
+            return Ok(self.code_to_ansi_tokens_with_themes(code));
+        }
         let tokens = self.code_to_scope_tokens(code, language)?;
         let language = self.language_index(language)?;
         let themes = &self.engine.inner.themes;
@@ -380,6 +390,86 @@ impl Highlighter {
             output.push(output_line);
         }
         Ok(output)
+    }
+
+    fn code_to_ansi_tokens(&self, code: &str) -> Vec<Vec<ThemedToken>> {
+        let theme = &self.engine.inner.themes[0].theme;
+        let mut state = AnsiState::default();
+        let mut spans = Vec::new();
+        split_lines(code)
+            .map(|line| {
+                parse_ansi_line(line, &mut state, &mut spans);
+                let mut output: Vec<ThemedToken> =
+                    Vec::with_capacity(spans.len());
+                for span in &spans {
+                    let style = resolve_ansi_style(theme, span.state);
+                    let content = &line[span.range.clone()];
+                    if let Some(previous) = output.last_mut()
+                        && previous.color == style.color
+                        && previous.background == style.background
+                        && previous.font_style == style.font_style
+                    {
+                        previous.content.push_str(content);
+                    } else {
+                        output.push(ThemedToken {
+                            content: content.to_owned(),
+                            color: style.color,
+                            background: style.background,
+                            font_style: style.font_style,
+                            scopes: 0,
+                        });
+                    }
+                }
+                output
+            })
+            .collect()
+    }
+
+    fn code_to_ansi_tokens_with_themes(
+        &self,
+        code: &str,
+    ) -> Vec<Vec<MultiThemedToken>> {
+        let themes = &self.engine.inner.themes;
+        let mut state = AnsiState::default();
+        let mut spans = Vec::new();
+        split_lines(code)
+            .map(|line| {
+                parse_ansi_line(line, &mut state, &mut spans);
+                let mut output: Vec<MultiThemedToken> =
+                    Vec::with_capacity(spans.len());
+                for span in &spans {
+                    let styles = themes
+                        .iter()
+                        .enumerate()
+                        .map(|(theme_id, theme)| {
+                            let style =
+                                resolve_ansi_style(&theme.theme, span.state);
+                            ThemeTokenStyle {
+                                theme: theme_id
+                                    .try_into()
+                                    .expect("too many themes"),
+                                color: style.color,
+                                background: style.background,
+                                font_style: style.font_style,
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    let content = &line[span.range.clone()];
+                    if let Some(previous) = output.last_mut()
+                        && previous.styles == styles
+                    {
+                        previous.content.push_str(content);
+                    } else {
+                        output.push(MultiThemedToken {
+                            content: content.to_owned(),
+                            styles,
+                            scopes: 0,
+                        });
+                    }
+                }
+                output
+            })
+            .collect()
     }
 
     pub fn code_to_html(
@@ -642,6 +732,7 @@ impl LanguageSession {
         state: &mut GrammarState,
         is_first_line: bool,
     ) -> Result<Vec<ScopeToken>> {
+        self.tokenizer.validate_state(state)?;
         let previous = std::mem::take(state);
         let (tokens, next) = self.tokenizer.tokenize_line_owned(
             line,
@@ -733,13 +824,14 @@ impl HighlighterBuilder {
     }
 
     pub fn build_engine(self) -> Result<HighlighterEngine> {
-        let selected_plain_text = !self.languages.is_empty()
-            && self.languages.iter().all(|id| is_plain_text(id));
+        let selected_special = !self.languages.is_empty()
+            && self
+                .languages
+                .iter()
+                .all(|id| is_plain_text(id) || crate::ansi::is_ansi(id));
         let (definitions, root_definitions) = match self.bundle {
             Some(bundle) => bundle.resolve(&self.languages)?,
-            None if self.runtime_languages.is_empty()
-                && !selected_plain_text =>
-            {
+            None if self.runtime_languages.is_empty() && !selected_special => {
                 return Err(Error::NoLanguage);
             }
             None => (Vec::new(), Vec::new()),
