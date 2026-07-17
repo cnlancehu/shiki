@@ -115,7 +115,7 @@ dependencies = [
 
 [[package]]
 name = "shiki"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "lz4_flex",
  "onig_sys",
@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "shiki-langs"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "shiki",
  "shiki-themes",
@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "shiki-macros"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "shiki-themes"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "shiki",
 ]
