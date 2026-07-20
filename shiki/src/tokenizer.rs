@@ -724,6 +724,8 @@ impl Tokenizer {
         for token in tokens.iter_mut() {
             token.range.end = token.range.end.min(line.len());
         }
+        #[cfg(debug_assertions)]
+        assert_token_partition(tokens, line.len());
         self.capture_buffers.push(captures);
         self.line_buffers.push(text);
         Ok(state)
@@ -1457,9 +1459,13 @@ fn emit_captures(
     }
     let mut boundaries = vec![full.start, full.end];
     for capture in captures {
-        if let Some(range) = matches.get(capture.index).and_then(Clone::clone) {
-            boundaries.push(range.start.max(full.start));
-            boundaries.push(range.end.min(full.end));
+        if let Some(range) = matches
+            .get(capture.index)
+            .and_then(Clone::clone)
+            .and_then(|range| intersect_ranges(range, &full))
+        {
+            boundaries.push(range.start);
+            boundaries.push(range.end);
         }
     }
     boundaries.sort_unstable();
@@ -1500,7 +1506,10 @@ fn emit_captures(
         .iter()
         .filter_map(|capture| {
             let rule = capture.retokenize?;
-            let range = matches.get(capture.index).and_then(Clone::clone)?;
+            let range = matches
+                .get(capture.index)
+                .and_then(Clone::clone)
+                .and_then(|range| intersect_ranges(range, &full))?;
             let mut scopes = base;
             push_scope_names(
                 arena,
@@ -1527,6 +1536,29 @@ fn emit_captures(
             })
         })
         .collect()
+}
+
+fn intersect_ranges(
+    range: Range<usize>,
+    bounds: &Range<usize>,
+) -> Option<Range<usize>> {
+    let range = range.start.max(bounds.start)..range.end.min(bounds.end);
+    (!range.is_empty()).then_some(range)
+}
+
+#[cfg(debug_assertions)]
+fn assert_token_partition(tokens: &[ScopeToken], line_len: usize) {
+    let mut position = 0;
+    for token in tokens {
+        debug_assert_eq!(
+            token.range.start, position,
+            "overlapping token ranges"
+        );
+        debug_assert!(token.range.end > token.range.start, "empty token range");
+        debug_assert!(token.range.end <= line_len, "token exceeds source line");
+        position = token.range.end;
+    }
+    debug_assert_eq!(position, line_len, "tokens do not cover source line");
 }
 
 fn replace_range(
@@ -1665,31 +1697,39 @@ fn resolve_backrefs<'a>(
     captures: &[Option<Range<usize>>],
     text: &str,
 ) -> Cow<'a, str> {
-    if !pattern
-        .as_bytes()
-        .windows(2)
-        .any(|pair| pair[0] == b'\\' && pair[1].is_ascii_digit())
-    {
-        return Cow::Borrowed(pattern);
-    }
     let mut output = String::with_capacity(pattern.len());
     let bytes = pattern.as_bytes();
     let mut index = 0;
+    let mut last = 0;
+    let mut replaced = false;
     while index < bytes.len() {
-        if bytes[index] == b'\\'
-            && index + 1 < bytes.len()
-            && bytes[index + 1].is_ascii_digit()
+        if bytes[index] != b'\\' {
+            index += 1;
+            continue;
+        }
+        let slash_start = index;
+        while bytes.get(index) == Some(&b'\\') {
+            index += 1;
+        }
+        if bytes.get(index).is_some_and(u8::is_ascii_digit)
+            && (index - slash_start) % 2 == 1
         {
-            let capture = (bytes[index + 1] - b'0') as usize;
+            output.push_str(&pattern[last..index - 1]);
+            let capture = (bytes[index] - b'0') as usize;
             if let Some(range) = captures.get(capture).and_then(Clone::clone) {
                 output.push_str(&regex_escape(&text[range]));
             }
-            index += 2;
-        } else {
-            output.push(bytes[index] as char);
+            index += 1;
+            last = index;
+            replaced = true;
+        } else if index < bytes.len() {
             index += 1;
         }
     }
+    if !replaced {
+        return Cow::Borrowed(pattern);
+    }
+    output.push_str(&pattern[last..]);
     Cow::Owned(output)
 }
 
@@ -1734,7 +1774,9 @@ fn onig_error(code: i32, error_info: *mut onig_sys::OnigErrorInfo) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::exact_regex_literal;
+    use std::borrow::Cow;
+
+    use super::{exact_regex_literal, resolve_backrefs};
 
     #[test]
     fn recognizes_only_exact_regex_literals() {
@@ -1754,5 +1796,20 @@ mod tests {
         for pattern in ["", r"\d", ".", "a+", "^value", "(value)", "[ab]"] {
             assert!(exact_regex_literal(pattern).is_none(), "{pattern}");
         }
+    }
+
+    #[test]
+    fn resolves_only_unescaped_backrefs_without_corrupting_utf8() {
+        let text = "终.";
+        let captures = [Some(0..text.len()), Some(0.."终".len())];
+        assert_eq!(
+            resolve_backrefs(r"前\1后\\1", &captures, text),
+            r"前终后\\1"
+        );
+        assert_eq!(resolve_backrefs(r"\1", &[None, Some(3..4)], "abc."), r"\.");
+        assert!(matches!(
+            resolve_backrefs(r"前\\1后", &captures, text),
+            Cow::Borrowed(_)
+        ));
     }
 }

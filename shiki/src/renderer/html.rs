@@ -70,8 +70,8 @@ impl HtmlOptions {
 
     /// Returns a minimal wrapper configuration.
     ///
-    /// It adds no `<pre>`/`<code>` classes, attributes, or root theme styles.
-    /// The `line` wrapper class and token styles remain enabled.
+    /// It adds no `<pre>`/`<code>` classes, attributes, or root and default theme styles.
+    /// The `line` wrapper class remain enabled.
     pub fn clean() -> Self {
         Self {
             pre_classes: Vec::new(),
@@ -131,18 +131,16 @@ fn render_html(
         highlighter.ensure_tokenizer(language);
         Some(language)
     };
-    let default_index = options
-        .default_theme
-        .as_deref()
-        .and_then(|name| {
-            highlighter
-                .engine
-                .inner
-                .themes
-                .iter()
-                .position(|theme| theme.name == name)
-        })
-        .unwrap_or(0);
+    let default_index = match options.default_theme.as_deref() {
+        Some(name) => highlighter
+            .engine
+            .inner
+            .themes
+            .iter()
+            .position(|theme| theme.name == name)
+            .ok_or_else(|| crate::Error::ThemeNotBundled(name.to_owned()))?,
+        None => 0,
+    };
     let default = &highlighter.engine.inner.themes[default_index];
     let multiple = highlighter.engine.inner.themes.len() > 1;
 

@@ -603,15 +603,28 @@ fn captures_or<'a>(
 
 fn normalize_pattern(pattern: &str) -> String {
     let mut output = String::with_capacity(pattern.len());
-    let mut chars = pattern.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' && chars.peek() == Some(&'z') {
-            chars.next();
+    let bytes = pattern.as_bytes();
+    let mut index = 0;
+    let mut last = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'\\' {
+            index += 1;
+            continue;
+        }
+        let slash_start = index;
+        while bytes.get(index) == Some(&b'\\') {
+            index += 1;
+        }
+        if bytes.get(index) == Some(&b'z') && (index - slash_start) % 2 == 1 {
+            output.push_str(&pattern[last..index - 1]);
             output.push_str(r"$(?!\n)(?<!\n)");
-        } else {
-            output.push(ch);
+            index += 1;
+            last = index;
+        } else if index < bytes.len() {
+            index += 1;
         }
     }
+    output.push_str(&pattern[last..]);
     output
 }
 
@@ -717,4 +730,17 @@ where
         .collect::<std::result::Result<std::collections::BTreeMap<_, _>, _>>(
         )?;
     Ok(RawMap::Owned(values))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_pattern;
+
+    #[test]
+    fn normalizes_only_unescaped_end_anchors_without_corrupting_utf8() {
+        assert_eq!(normalize_pattern(r"\z"), r"$(?!\n)(?<!\n)");
+        assert_eq!(normalize_pattern(r"\\z"), r"\\z");
+        assert_eq!(normalize_pattern(r"前\z后"), r"前$(?!\n)(?<!\n)后");
+        assert_eq!(normalize_pattern(r"\\\z"), r"\\$(?!\n)(?<!\n)");
+    }
 }

@@ -206,6 +206,86 @@ fn markdown_fenced_rust_uses_embedded_grammar() {
 }
 
 #[test]
+fn javascript_tokens_are_ordered_and_non_overlapping() {
+    static JAVASCRIPT: LanguageBundle =
+        shiki_langs::languages![javascript, markdown];
+    let mut highlighter = Highlighter::builder()
+        .bundle(&JAVASCRIPT)
+        .languages(["javascript"])
+        .themes([
+            ("light", &shiki_themes::CATPPUCCIN_LATTE),
+            ("dark", &shiki_themes::CATPPUCCIN_MOCHA),
+        ])
+        .build()
+        .unwrap();
+    let source = "export const text_encoder = new TextEncoder();";
+
+    let lines = highlighter
+        .code_to_scope_tokens(source, "javascript")
+        .unwrap();
+    assert_token_partition(source, &lines[0]);
+
+    let html = highlighter.code_to_html(source, "javascript").unwrap();
+    assert_eq!(visible_text(&html), source);
+}
+
+#[test]
+fn markdown_embedded_javascript_tokens_are_ordered_and_non_overlapping() {
+    static JAVASCRIPT: LanguageBundle =
+        shiki_langs::languages![javascript, markdown];
+    let mut highlighter = Highlighter::builder()
+        .bundle(&JAVASCRIPT)
+        .languages(["markdown"])
+        .themes([
+            ("light", &shiki_themes::CATPPUCCIN_LATTE),
+            ("dark", &shiki_themes::CATPPUCCIN_MOCHA),
+        ])
+        .build()
+        .unwrap();
+    let line = "export export const text_encoder = new *TextEncoder*();";
+    let source = format!("```js\n{line}\n```");
+
+    let lines = highlighter
+        .code_to_scope_tokens(&source, "markdown")
+        .unwrap();
+    assert_token_partition(line, &lines[1]);
+
+    let html = highlighter.code_to_html(&source, "markdown").unwrap();
+    assert_eq!(visible_text(&html), source);
+}
+
+fn assert_token_partition(source: &str, tokens: &[shiki::ScopeToken]) {
+    let mut position = 0;
+    for token in tokens {
+        assert_eq!(token.range.start, position, "{tokens:#?}");
+        assert!(token.range.end > token.range.start, "{tokens:#?}");
+        assert!(token.range.end <= source.len(), "{tokens:#?}");
+        assert!(source.is_char_boundary(token.range.start), "{tokens:#?}");
+        assert!(source.is_char_boundary(token.range.end), "{tokens:#?}");
+        position = token.range.end;
+    }
+    assert_eq!(position, source.len(), "{tokens:#?}");
+}
+
+fn visible_text(html: &str) -> String {
+    let mut output = String::new();
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => output.push(ch),
+            _ => {}
+        }
+    }
+    output
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&amp;", "&")
+}
+
+#[test]
 fn renders_ansi_with_theme_palette_and_decorations() {
     let mut highlighter = Highlighter::builder()
         .bundle(&LANGUAGES)
@@ -460,6 +540,27 @@ fn html_options_support_clean_and_lazy_static_configurations() {
     );
     assert!(!static_html.contains("class=\"line\""), "{static_html}");
     assert!(static_html.contains("color:var(--light)"), "{static_html}");
+}
+
+#[test]
+fn html_rejects_an_unknown_default_theme() {
+    let mut highlighter = Highlighter::builder()
+        .bundle(&LANGUAGES)
+        .languages(["rust"])
+        .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+        .build()
+        .unwrap();
+    let options = HtmlOptions {
+        default_theme: Some("missing".into()),
+        ..HtmlOptions::default()
+    };
+
+    let error = highlighter
+        .code_to_html_with_options("let value = 1;", "rust", &options)
+        .unwrap_err();
+    assert!(
+        matches!(error, shiki::Error::ThemeNotBundled(name) if name == "missing")
+    );
 }
 
 #[test]
