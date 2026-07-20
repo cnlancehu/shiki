@@ -5,7 +5,7 @@ members = ["shiki", "shiki-langs", "shiki-macros", "shiki-themes"]
 [workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-version = "0.0.5"
+version = "0.0.6"
 repository = "https://github.com/cnlancehu/shiki"
 keywords = ["highlighting", "syntax"]
 
@@ -14,15 +14,15 @@ onig_sys = { version = "69.9.3", default-features = false }
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = "1.0.150"
 thiserror = "2.0.18"
-lz4_flex = { version = "0.13.1", default-features = false }
+lz4_flex = { version = "0.14.0" }
 proc-macro2 = "1.0.106"
 quote = "1.0.46"
-syn = { version = "2.0.118", features = ["full"] }
+syn = { version = "3.0.2", features = ["full"] }
 
-shiki = { version = "0.0.5", path = "shiki" }
-shiki-langs = { version = "0.0.5", path = "shiki-langs" }
-shiki-macros = { version = "0.0.5", path = "shiki-macros" }
-shiki-themes = { version = "0.0.5", path = "shiki-themes" }
+shiki = { version = "0.0.6", path = "shiki" }
+shiki-langs = { version = "0.0.6", path = "shiki-langs" }
+shiki-macros = { version = "0.0.6", path = "shiki-macros" }
+shiki-themes = { version = "0.0.6", path = "shiki-themes" }
 
 [profile.release]
 codegen-units = 1
