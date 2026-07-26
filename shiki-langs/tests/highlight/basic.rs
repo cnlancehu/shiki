@@ -1,4 +1,4 @@
-use shiki_core::{Highlighter, HtmlOptions, LanguageBundle};
+use shiki::{Highlighter, HtmlOptions, LanguageBundle};
 
 use super::LANGUAGES;
 
@@ -253,7 +253,7 @@ fn markdown_embedded_javascript_tokens_are_ordered_and_non_overlapping() {
     assert_eq!(visible_text(&html), source);
 }
 
-fn assert_token_partition(source: &str, tokens: &[shiki_core::ScopeToken]) {
+fn assert_token_partition(source: &str, tokens: &[shiki::ScopeToken]) {
     let mut position = 0;
     for token in tokens {
         assert_eq!(token.range.start, position, "{tokens:#?}");

@@ -9,7 +9,7 @@ multi-theme CSS-variable output.
 ## Installation
 
 ```console
-cargo add shiki --features langs,themes
+cargo add shiki shiki-langs shiki-themes
 ```
 
 ## One theme
@@ -19,7 +19,7 @@ Generated definitions are exported as uppercase constants:
 ```rust,ignore
 let mut highlighter = shiki::Highlighter::builder()
     .bundle(&LANGUAGES)
-    .theme(&shiki::themes::CATPPUCCIN_MOCHA)
+    .theme(&shiki_themes::CATPPUCCIN_MOCHA)
     .build()?;
 ```
 
@@ -35,8 +35,8 @@ The name paired with each definition becomes its CSS custom-property prefix:
 let mut highlighter = shiki::Highlighter::builder()
     .bundle(&LANGUAGES)
     .themes([
-        ("dark", &shiki::themes::CATPPUCCIN_MOCHA),
-        ("light", &shiki::themes::CATPPUCCIN_LATTE),
+        ("dark", &shiki_themes::CATPPUCCIN_MOCHA),
+        ("light", &shiki_themes::CATPPUCCIN_LATTE),
     ])
     .build()?;
 
@@ -61,7 +61,7 @@ name, raw theme data, and a lazily compiled `Arc<Theme>`.
 small `ThemeBundle` for metadata lookup:
 
 ```rust,ignore
-let themes = shiki::themes::themes![dracula, nord, vesper];
+let themes = shiki_themes::themes![dracula, nord, vesper];
 let nord = themes.get("nord").expect("bundled theme");
 ```
 

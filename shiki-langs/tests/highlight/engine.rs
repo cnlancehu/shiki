@@ -1,4 +1,4 @@
-use shiki_core::Highlighter;
+use shiki::Highlighter;
 
 use super::LANGUAGES;
 
@@ -16,7 +16,7 @@ fn rejects_state_from_another_language() {
     let error = highlighter
         .tokenize_line("const value = 1", "astro", Some(&rust_state), true)
         .unwrap_err();
-    assert!(matches!(error, shiki_core::Error::GrammarStateMismatch));
+    assert!(matches!(error, shiki::Error::GrammarStateMismatch));
 }
 
 #[test]
@@ -38,7 +38,7 @@ fn rejects_state_from_another_same_language_session() {
     let error = second
         .tokenize_line("let value = 1;", &mut foreign_state, true)
         .unwrap_err();
-    assert!(matches!(error, shiki_core::Error::GrammarStateMismatch));
+    assert!(matches!(error, shiki::Error::GrammarStateMismatch));
     let continued = first
         .tokenize_line("close */ let value = 1;", &mut foreign_state, false)
         .unwrap();
@@ -61,7 +61,7 @@ fn rejects_state_after_clearing_language_cache() {
     let error = highlighter
         .tokenize_line("close */", "rust", Some(&stale_state), false)
         .unwrap_err();
-    assert!(matches!(error, shiki_core::Error::GrammarStateMismatch));
+    assert!(matches!(error, shiki::Error::GrammarStateMismatch));
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn a_session_keeps_shared_regexes_alive_after_its_engine_is_dropped() {
 
 #[test]
 fn long_matches_are_not_truncated_at_the_old_scanner_window() {
-    let grammar = shiki_core::RawGrammar::from_json(
+    let grammar = shiki::RawGrammar::from_json(
         "long-match",
         r#"{
             "scopeName": "source.long-match",

@@ -1,4 +1,4 @@
-use shiki_core::LanguageBundle;
+use shiki::LanguageBundle;
 
 static LANGUAGES: LanguageBundle =
     shiki_langs::languages![astro, markdown, rust, vue];

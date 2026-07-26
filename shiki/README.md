@@ -1,35 +1,266 @@
 # shiki
 
-**The batteries-optional facade for shiki-rs.**
+**Fast TextMate highlighting for Rust.**
 
-`shiki` always re-exports the complete
-[`shiki_core`](https://crates.io/crates/shiki-rs-core) API. Bundled languages,
-themes, and compile-time macros are available behind
-independent features, so applications can opt into only the catalogs they use.
+`shiki` is the core crate of `shiki-rs`. It compiles TextMate grammars into a
+compact runtime representation, tokenizes with Oniguruma, resolves themes, and
+provides HTML and custom rendering APIs.
 
-## Features
+This crate intentionally contains no bundled language or theme catalog. Use
+[`shiki-langs`](https://crates.io/crates/shiki-langs) and
+[`shiki-themes`](https://crates.io/crates/shiki-themes), provide runtime
+definitions, or generate an engine with
+[`shiki-macros`](https://crates.io/crates/shiki-macros).
 
-| Feature  | Default | Re-export |
-|----------|---------|-----------|
-| `json`   | yes     | Enables runtime JSON support in `shiki-core` |
-| `langs`  | no      | `shiki::langs` |
-| `themes` | no      | `shiki::themes` |
-| `macros` | no      | `shiki::macros` and the macros at the crate root |
-| `full`   | no      | Enables all features above |
+## Installation
 
-```toml
-[dependencies]
-shiki = { version = "0.0.7", features = ["langs", "themes"] }
+```console
+cargo add shiki
 ```
+
+For the usual bundled setup:
+
+```console
+cargo add shiki shiki-langs shiki-themes
+```
+
+## Quick start
 
 ```rust,ignore
 use shiki::{Highlighter, LanguageBundle};
 
-static LANGUAGES: LanguageBundle = shiki::langs::languages![rust];
+static LANGUAGES: LanguageBundle = shiki_langs::languages![rust];
 
 let mut highlighter = Highlighter::builder()
     .bundle(&LANGUAGES)
     .languages(["rust"])
-    .theme(&shiki::themes::CATPPUCCIN_MOCHA)
+    .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+    .build()?;
+
+let html = highlighter.code_to_html("fn main() {}", "rust")?;
+```
+
+## Plain text
+
+Every engine includes the reserved `text` language and its `txt` and `plain`
+aliases. It emits one token for each non-empty line, bypassing syntax matching
+while retaining HTML escaping and the selected theme's default foreground and
+background styles. This makes it suitable as the fallback for an unavailable
+or user-provided language:
+
+```rust,ignore
+let html = highlighter.code_to_html(
+    "<script>not highlighted</script>",
+    "text",
+)?;
+```
+
+A standalone plain-text engine does not require a language bundle:
+
+```rust,ignore
+let mut highlighter = shiki::Highlighter::builder()
+    .languages(["text"])
+    .theme(&shiki_themes::GITHUB_DARK)
     .build()?;
 ```
+
+## ANSI terminal output
+
+The reserved `ansi` language converts terminal SGR sequences to themed tokens
+and HTML without requiring a TextMate grammar:
+
+```rust,ignore
+let html = highlighter.code_to_html(
+    "\x1b[1;32mcompleted\x1b[0m in 12ms",
+    "ansi",
+)?;
+```
+
+It supports the standard and bright theme palettes, 256-color and TrueColor
+sequences, foreground/background colors, reverse video, dim, bold, italic,
+underline, strikethrough, and state spanning multiple lines. Theme JSON
+`terminal.ansi*` colors are retained in runtime and precompiled engines;
+VS Code-compatible colors are used when a theme omits them. Owned ANSI tokens
+have no TextMate scopes and use scope ID `0`; the scope-token and incremental
+grammar APIs remain specific to TextMate languages.
+
+Build a shared engine when several documents need the same immutable grammar
+and theme data:
+
+```rust,ignore
+let engine = Highlighter::builder()
+    .bundle(&LANGUAGES)
+    .languages(["rust"])
+    .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+    .build_engine()?;
+
+let mut first = engine.session("rust")?;
+let mut second = engine.session("rust")?;
+```
+
+## Main types
+
+- `HighlighterBuilder` selects definitions, themes, and regex limits.
+- `HighlighterEngine` owns the lazy grammar catalog, compiled grammar IR,
+  themes, and shared static-regex cache.
+- `Highlighter` lazily owns per-language tokenizers and rendering caches.
+- `LanguageSession` owns one independent document tokenizer.
+- `GrammarState` carries TextMate begin/end and begin/while state between lines.
+- `HtmlRenderer` streams compact HTML without materializing owned theme tokens.
+- `Renderer` is the extension point for other output formats.
+
+## Tokenization APIs
+
+`Highlighter` exposes representations for different integration costs:
+
+- `tokenize_line` for incremental documents;
+- `tokenize_line_into` for allocation-reusing streaming tokenization;
+- `token_styles` for borrowed multi-theme style resolution;
+- `code_to_scope_tokens` for source ranges and compact scope IDs;
+- `code_to_tokens` for owned tokens resolved against one theme;
+- `code_to_tokens_with_themes` for every configured theme;
+- `code_to_html` and `code_to_html_with_options` for streaming HTML;
+- `render` for a custom `Renderer` implementation.
+
+`split_lines`, `ThemeInfo`, and `ansi::AnsiParser` expose the same line,
+theme, and ANSI primitives used by the built-in renderer. Internal grammar IR
+and tokenizer storage stay private so custom renderers do not depend on cache
+layout details.
+
+Scope names can be recovered from `ScopeStackId` when diagnostics or semantic
+inspection needs them. `cache_stats`, `clear_language_cache`, and
+`clear_all_caches` expose control over lazily accumulated runtime state.
+`TokenizerCacheStats` reports shared grammar slots and session-local dynamic
+regexes separately.
+
+## Lazy grammar and regex caches
+
+Building an engine from a large bundle only registers language metadata.
+Grammar JSON, compiled IR, and Oniguruma programs are loaded when a language is
+first used. `loaded_language_count()` reports resident grammar IR.
+
+Immutable regex programs from grammar definitions are compiled once per engine
+and shared by every `Highlighter` and `LanguageSession`. Compiled grammar rules
+refer to interned patterns by compact integer ID; a shared per-grammar slot
+turns that ID into a native program on first use. Scanner construction then
+uses direct indexed lookup. A string hash is needed only on the cold path that
+deduplicates the same static pattern across different grammars, and the
+catalog interner makes those grammars share one source-string allocation.
+
+Only `end` and `while` templates that actually contain source-dependent
+back-references remain session-local. Static `end` and `while` patterns use the
+same shared slots as ordinary match rules. `regex_cache_stats()` reports
+successful compiles and reuse; `clear_regex_cache()` releases engine-owned
+entries. Active sessions pin the programs they use and remain valid after a
+clear.
+
+Keeping a shared entry guarantees that a later session does not call
+`onig_new` again, but the compiled program necessarily occupies memory.
+Explicitly clearing or otherwise evicting it trades memory for a possible
+future recompilation.
+
+Capture retokenization shares a per-line depth and work budget. Malformed or
+self-referential runtime grammars return a structured error instead of growing
+the call stack or repeatedly rescanning the same fragment without bound.
+
+## HTML rendering
+
+`HtmlOptions` independently controls explicit classes and attributes, automatic
+`shiki`/theme classes, `data-themes`, line wrappers, root theme variables,
+foreground/background styles, default theme selection, token spans, and
+variable-only output.
+
+```rust,ignore
+let mut options = shiki::HtmlOptions::default();
+options.default_theme = Some("light".into());
+options.pre_classes.push("code-block".into());
+options.code_classes.push("language-rust".into());
+options
+    .pre_attributes
+    .insert("data-language".into(), "rust".into());
+options.include_line_wrapper = false;
+options.include_default_theme_styles = false;
+
+let html = highlighter.code_to_html_with_options(
+    "let value = 1;",
+    "rust",
+    &options,
+)?;
+```
+
+Use `HtmlOptions::clean()` for a `<pre><code>…</code></pre>` wrapper with no
+automatic wrapper attributes or root styles. It retains the `line` class and
+syntax-highlighted token styles.
+
+Custom options own their `Vec<String>` and `BTreeMap<String, String>` values.
+Use `LazyLock` to create one shared global configuration:
+
+```rust,ignore
+use std::sync::LazyLock;
+
+static HTML: LazyLock<shiki::HtmlOptions> = LazyLock::new(|| {
+    let mut options = shiki::HtmlOptions::clean();
+    options.pre_classes.push("code-block".into());
+    options
+        .code_attributes
+        .insert("aria-label".into(), "source".into());
+    options.include_data_themes = true;
+    options.include_line_wrapper = false;
+    options
+});
+```
+
+Classes, attributes, `line_class`, and `default_theme` are public fields. Set
+`line_class` to `None` to keep a classless line wrapper, or set
+`include_line_wrapper` to `false` to remove the wrapper itself.
+
+With multiple themes, token colors are emitted as CSS custom properties. Font
+and background variables are emitted only when required. Adjacent tokens with
+the same final visual style are merged even when their scope stacks differ;
+plain whitespace is left unwrapped when a span would have no visual effect.
+
+## Runtime definitions
+
+The default `json` feature enables TextMate grammar and theme JSON:
+
+```rust,ignore
+let highlighter = Highlighter::builder()
+    .json_language("custom", grammar_json)?
+    .json_theme("custom", theme_json)?
+    .build()?;
+```
+
+Definitions may also be constructed through `RawGrammar`, `RawRule`,
+`RawTheme`, and their nested raw types. `LanguageInput` adds aliases and
+external injection targets to runtime grammars.
+
+## Features
+
+| Feature | Default | Description                                                                     |
+| ------- | ------- | ------------------------------------------------------------------------------- |
+| `json`  | yes     | Enables `serde`/`serde_json`, runtime JSON parsing, and JSON-backed definitions |
+
+Compile without the JSON stack when the target only consumes snapshots generated
+by `shiki-macros`:
+
+```console
+cargo add shiki --no-default-features
+```
+
+In that configuration, target-side `shiki` depends on `onig_sys`, `thiserror`,
+and the small `lz4_flex` snapshot codec, but not `serde` or `serde_json`.
+
+## Performance model
+
+Compiled grammar IR and themes belong to the engine. Engines produced by
+`shiki-macros` decode each grammar IR on first use; runtime-built engines compile
+the selected raw grammar and its dependencies on first use as well. Oniguruma
+programs, scanners, dynamic regexes, scope transitions, injection results, and
+style rows are also created lazily. `HighlighterEngine::loaded_language_count`
+exposes the number of resident grammar IRs.
+
+- Reuse engines and sessions.
+- Bundle only required roots when possible.
+- Use incremental line state for editors.
+- Prefer scope tokens or streaming rendering when owned tokens are unnecessary.
+- Expect very long minified lines to cost more than ordinary line-oriented source.

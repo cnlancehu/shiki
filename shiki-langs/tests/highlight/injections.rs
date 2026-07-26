@@ -1,4 +1,4 @@
-use shiki_core::Highlighter;
+use shiki::Highlighter;
 
 use super::LANGUAGES;
 

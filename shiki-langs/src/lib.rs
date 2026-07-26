@@ -6,7 +6,7 @@ mod macros;
 pub mod generated;
 
 pub use generated::*;
-pub use shiki_core::{LanguageBundle, LanguageDefinition, LanguageGroup};
+pub use shiki::{LanguageBundle, LanguageDefinition, LanguageGroup};
 
 /// A bundle that enables every bundled language when no explicit roots are selected.
 pub const ALL: LanguageBundle =
@@ -14,8 +14,8 @@ pub const ALL: LanguageBundle =
 
 /// Returns a bundle containing every bundled language.
 ///
-/// Pass this to [`shiki_core::HighlighterBuilder::bundle`] and omit
-/// [`shiki_core::HighlighterBuilder::languages`] to enable all languages.
+/// Pass this to [`shiki::HighlighterBuilder::bundle`] and omit
+/// [`shiki::HighlighterBuilder::languages`] to enable all languages.
 pub const fn all() -> LanguageBundle {
     ALL
 }

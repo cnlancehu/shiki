@@ -3,11 +3,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use shiki_core::{Highlighter, LanguageBundle};
+use shiki::{Highlighter, LanguageBundle};
 
 static LANGUAGES: LanguageBundle = shiki_langs::languages![javascript];
 
-fn main() -> shiki_core::Result<()> {
+fn main() -> shiki::Result<()> {
     let path = env::args().nth(1).expect("usage: diagnose <path>");
     if path == "--synthetic" {
         const STATEMENT: &str =
@@ -22,7 +22,7 @@ fn main() -> shiki_core::Result<()> {
     diagnose(&path, &source)
 }
 
-fn diagnose(label: &str, source: &str) -> shiki_core::Result<()> {
+fn diagnose(label: &str, source: &str) -> shiki::Result<()> {
     let mut highlighter = Highlighter::builder()
         .bundle(&LANGUAGES)
         .languages(["javascript"])

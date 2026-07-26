@@ -1,8 +1,8 @@
-use shiki_core::{Highlighter, LanguageBundle};
+use shiki::{Highlighter, LanguageBundle};
 
 #[test]
 fn public_ansi_parser_reuses_state_across_lines() {
-    let mut parser = shiki_core::ansi::AnsiParser::new();
+    let mut parser = shiki::ansi::AnsiParser::new();
     let first = "\x1b[31mred";
     let spans = parser.parse_line(first);
     assert_eq!(&first[spans[0].range.clone()], "red");
@@ -66,9 +66,8 @@ fn loads_runtime_json_and_raw_definitions() {
             .contains("#ff0000")
     );
 
-    let grammar =
-        shiki_core::RawGrammar::from_json("runtime", GRAMMAR).unwrap();
-    let theme = shiki_core::RawTheme::from_json("runtime", THEME).unwrap();
+    let grammar = shiki::RawGrammar::from_json("runtime", GRAMMAR).unwrap();
+    let theme = shiki::RawTheme::from_json("runtime", THEME).unwrap();
     let mut from_raw = Highlighter::builder()
         .language("runtime", grammar)
         .theme(theme)

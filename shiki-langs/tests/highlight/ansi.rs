@@ -1,4 +1,4 @@
-use shiki_core::Highlighter;
+use shiki::Highlighter;
 
 use super::LANGUAGES;
 
@@ -46,14 +46,10 @@ fn renders_ansi_with_theme_palette_and_decorations() {
         .unwrap();
     assert_eq!(&*styled.color, "#d20f39");
     assert_eq!(styled.background.as_deref(), Some("#df8e1d"));
-    assert!(styled.font_style.contains(shiki_core::FontStyle::BOLD));
-    assert!(styled.font_style.contains(shiki_core::FontStyle::ITALIC));
-    assert!(styled.font_style.contains(shiki_core::FontStyle::UNDERLINE));
-    assert!(
-        styled
-            .font_style
-            .contains(shiki_core::FontStyle::STRIKETHROUGH)
-    );
+    assert!(styled.font_style.contains(shiki::FontStyle::BOLD));
+    assert!(styled.font_style.contains(shiki::FontStyle::ITALIC));
+    assert!(styled.font_style.contains(shiki::FontStyle::UNDERLINE));
+    assert!(styled.font_style.contains(shiki::FontStyle::STRIKETHROUGH));
 }
 
 #[test]

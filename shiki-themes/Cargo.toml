@@ -10,4 +10,4 @@ readme = "README.md"
 include = ["Cargo.toml", "README.md", "src/**", "assets/**"]
 
 [dependencies]
-shiki-core = { workspace = true, features = ["json"] }
+shiki = { workspace = true, features = ["json"] }

@@ -8,7 +8,7 @@ TextMate grammar assets, aliases, dependency metadata, and injection targets.
 ## Installation
 
 ```console
-cargo add shiki --features langs,themes
+cargo add shiki shiki-langs shiki-themes
 ```
 
 ## Select languages at compile time
@@ -20,12 +20,12 @@ dependencies automatically:
 use shiki::{Highlighter, LanguageBundle};
 
 static LANGUAGES: LanguageBundle =
-    shiki::langs::languages![rust, javascript, typescript, vue];
+    shiki_langs::languages![rust, javascript, typescript, vue];
 
 let mut highlighter = Highlighter::builder()
     .bundle(&LANGUAGES)
     .languages(["rust", "javascript", "typescript", "vue"])
-    .theme(&shiki::themes::CATPPUCCIN_MOCHA)
+    .theme(&shiki_themes::CATPPUCCIN_MOCHA)
     .build()?;
 ```
 
@@ -38,7 +38,7 @@ These names are also accepted by `languages!`, although they do not add a
 grammar asset:
 
 ```rust,ignore
-static PLAIN_TEXT: LanguageBundle = shiki::langs::languages![text];
+static PLAIN_TEXT: LanguageBundle = shiki_langs::languages![text];
 ```
 
 The builder's `.languages(...)` call enables selected roots from the bundle.
@@ -47,10 +47,10 @@ Omit it to enable every root contained in that bundle.
 ## Enable every language
 
 ```rust,ignore
-let languages = shiki::langs::all();
+let languages = shiki_langs::all();
 let engine = shiki::Highlighter::builder()
     .bundle(&languages)
-    .theme(&shiki::themes::CATPPUCCIN_MOCHA)
+    .theme(&shiki_themes::CATPPUCCIN_MOCHA)
     .build_engine()?;
 ```
 

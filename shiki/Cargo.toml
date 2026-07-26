@@ -5,19 +5,16 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 keywords.workspace = true
-description = "Feature-gated facade for fast TextMate highlighting in Rust"
+description = "Fast TextMate tokenizer and highlighting engine for Rust"
 readme = "README.md"
 
 [features]
 default = ["json"]
-json = ["shiki-core/json"]
-langs = ["dep:shiki-langs"]
-themes = ["dep:shiki-themes"]
-macros = ["dep:shiki-macros"]
-full = ["json", "langs", "themes", "macros"]
+json = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
-shiki-core.workspace = true
-shiki-langs = { workspace = true, optional = true }
-shiki-macros = { workspace = true, optional = true }
-shiki-themes = { workspace = true, optional = true }
+onig_sys.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+thiserror.workspace = true
+lz4_flex.workspace = true

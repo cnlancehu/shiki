@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use shiki_core::{Highlighter, LanguageBundle};
+use shiki::{Highlighter, LanguageBundle};
 
 static LANGUAGES: LanguageBundle = shiki_langs::languages![javascript];
 const SOURCE: &str = r#"function render(items) {
@@ -74,7 +74,7 @@ fn main() {
         cache.capture_values,
         cache.style_rows,
         cache.reusable_buffer_bytes,
-        std::mem::size_of::<shiki_core::ThemedToken>(),
-        std::mem::size_of::<shiki_core::ThemeTokenStyle>(),
+        std::mem::size_of::<shiki::ThemedToken>(),
+        std::mem::size_of::<shiki::ThemeTokenStyle>(),
     );
 }

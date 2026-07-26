@@ -1,5 +1,3 @@
-extern crate shiki_core as shiki;
-
 use shiki_macros::{highlighter, highlighter_engine};
 
 #[test]

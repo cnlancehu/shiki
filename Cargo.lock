@@ -120,17 +120,18 @@ dependencies = [
 name = "shiki"
 version = "0.0.7"
 dependencies = [
- "shiki-langs",
- "shiki-macros",
- "shiki-rs-core",
- "shiki-themes",
+ "lz4_flex",
+ "onig_sys",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
 name = "shiki-langs"
 version = "0.0.7"
 dependencies = [
- "shiki-rs-core",
+ "shiki",
  "shiki-themes",
 ]
 
@@ -140,28 +141,17 @@ version = "0.0.7"
 dependencies = [
  "proc-macro2",
  "quote",
+ "shiki",
  "shiki-langs",
- "shiki-rs-core",
  "shiki-themes",
  "syn",
-]
-
-[[package]]
-name = "shiki-rs-core"
-version = "0.0.7"
-dependencies = [
- "lz4_flex",
- "onig_sys",
- "serde",
- "serde_json",
- "thiserror",
 ]
 
 [[package]]
 name = "shiki-themes"
 version = "0.0.7"
 dependencies = [
- "shiki-rs-core",
+ "shiki",
 ]
 
 [[package]]

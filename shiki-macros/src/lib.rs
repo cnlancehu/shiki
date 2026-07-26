@@ -204,11 +204,11 @@ fn compile(input: HighlighterInput) -> Result<TokenStream2> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let groups: &'static [shiki_core::LanguageGroup] = Box::leak(
+    let groups: &'static [shiki::LanguageGroup] = Box::leak(
         vec![shiki_langs::generated::ALL_LANGUAGES].into_boxed_slice(),
     );
-    let bundle = shiki_core::LanguageBundle::from_groups(groups);
-    let engine = shiki_core::Highlighter::builder()
+    let bundle = shiki::LanguageBundle::from_groups(groups);
+    let engine = shiki::Highlighter::builder()
         .bundle(&bundle)
         .languages(language_ids)
         .themes(selected_themes)

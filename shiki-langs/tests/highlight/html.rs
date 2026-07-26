@@ -1,4 +1,4 @@
-use shiki_core::{Highlighter, HtmlOptions, Renderer};
+use shiki::{Highlighter, HtmlOptions, Renderer};
 
 use super::LANGUAGES;
 
@@ -149,7 +149,7 @@ fn html_rejects_an_unknown_default_theme() {
         .code_to_html_with_options("let value = 1;", "rust", &options)
         .unwrap_err();
     assert!(
-        matches!(error, shiki_core::Error::ThemeNotBundled(name) if name == "missing")
+        matches!(error, shiki::Error::ThemeNotBundled(name) if name == "missing")
     );
 }
 
@@ -297,13 +297,12 @@ fn renderer_trait_supports_custom_outputs() {
             highlighter: &mut Highlighter,
             code: &str,
             language: &str,
-        ) -> shiki_core::Result<Self::Output> {
+        ) -> shiki::Result<Self::Output> {
             let mut state = highlighter.initial_state(language)?;
             let mut tokens = Vec::new();
             let mut count = 0;
             let theme_count = highlighter.themes().len();
-            for (line_index, line) in shiki_core::split_lines(code).enumerate()
-            {
+            for (line_index, line) in shiki::split_lines(code).enumerate() {
                 highlighter.tokenize_line_into(
                     line,
                     language,
@@ -341,7 +340,7 @@ fn renderer_trait_supports_custom_outputs() {
 
     let expected = highlighter.code_to_html("let value = 1;", "rust").unwrap();
     let options = HtmlOptions::default();
-    let mut html = shiki_core::HtmlRenderer::new(&options);
+    let mut html = shiki::HtmlRenderer::new(&options);
     let actual = highlighter
         .render("let value = 1;", "rust", &mut html)
         .unwrap();
