@@ -19,7 +19,8 @@ precompiled highlighter as a compact binary snapshot.
 
 | Crate                                                   | Purpose                                                              |
 | ------------------------------------------------------- | -------------------------------------------------------------------- |
-| [`shiki`](https://crates.io/crates/shiki)               | Core tokenizer, themes, engines, sessions, token APIs, and renderers |
+| [`shiki`](https://crates.io/crates/shiki)               | Feature-gated facade over the version-matched crates                 |
+| [`shiki_core`](https://crates.io/crates/shiki-rs-core) | Core library (`shiki-rs-core` package): tokenizer, engines, renderers |
 | [`shiki-langs`](https://crates.io/crates/shiki-langs)   | 253 bundled TextMate language grammars                               |
 | [`shiki-themes`](https://crates.io/crates/shiki-themes) | 65 bundled Shiki/TextMate themes                                     |
 | [`shiki-macros`](https://crates.io/crates/shiki-macros) | Compile-time highlighter generation                                  |
@@ -29,14 +30,18 @@ precompiled highlighter as a compact binary snapshot.
 For normal runtime construction with bundled languages and themes:
 
 ```console
-cargo add shiki shiki-langs shiki-themes
+cargo add shiki --features langs,themes
 ```
 
 For compile-time generated highlighters:
 
 ```console
-cargo add shiki shiki-macros
+cargo add shiki --features macros
 ```
+
+The facade keeps every sibling crate on the same release. Applications that
+need finer dependency control can still depend on `shiki-core`,
+`shiki-langs`, or `shiki-themes` directly.
 
 ## Quick start
 
@@ -45,13 +50,13 @@ Bundle only the languages the application needs:
 ```rust
 use shiki::{Highlighter, LanguageBundle};
 
-static LANGUAGES: LanguageBundle = shiki_langs::languages![rust];
+static LANGUAGES: LanguageBundle = shiki::langs::languages![rust];
 
 fn main() -> shiki::Result<()> {
     let mut highlighter = Highlighter::builder()
         .bundle(&LANGUAGES)
         .languages(["rust"])
-        .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+        .theme(&shiki::themes::CATPPUCCIN_MOCHA)
         .build()?;
 
     let html = highlighter.code_to_html("let answer = 42;", "rust")?;
@@ -100,7 +105,7 @@ selecting Vue includes the grammars injected into Vue documents.
 
 ```rust
 static WEB_LANGUAGES: shiki::LanguageBundle =
-    shiki_langs::languages![html, css, javascript, typescript, vue];
+    shiki::langs::languages![html, css, javascript, typescript, vue];
 ```
 
 The `.languages(...)` builder call chooses which bundled roots are enabled in a
@@ -108,24 +113,27 @@ particular engine. Omitting it enables every root in that bundle.
 
 ## Every bundled language
 
-Use `shiki_langs::all()` when dynamic language selection matters more than
-startup cost and memory:
+Use `shiki::langs::all()` when languages are selected dynamically:
 
 ```rust
 use shiki::Highlighter;
 
 fn build_all() -> shiki::Result<shiki::HighlighterEngine> {
-    let languages = shiki_langs::all();
+    let languages = shiki::langs::all();
     Highlighter::builder()
         .bundle(&languages)
-        .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+        .theme(&shiki::themes::CATPPUCCIN_MOCHA)
         .build_engine()
 }
 ```
 
-An engine initializes each language tokenizer lazily. The immutable compiled
-grammar IR is shared, while scanners, regex caches, scope stacks, and style rows
-are created only for languages that are used.
+An engine initially stores only catalog metadata. Grammar JSON, compiled IR,
+and native regex programs are loaded for a language on first use. Immutable
+static regex programs are then shared across every highlighter and session.
+Grammar rules hold compact pattern IDs, and scanner construction resolves them
+through indexed lazy slots rather than hashing strings on its hot path.
+Scanner regions, source-dependent back-reference regexes, scope stacks, and
+style rows remain session-local.
 
 ## Multiple themes
 
@@ -134,14 +142,14 @@ Theme output names become CSS variable prefixes:
 ```rust
 use shiki::{Highlighter, LanguageBundle};
 
-static LANGUAGES: LanguageBundle = shiki_langs::languages![rust];
+static LANGUAGES: LanguageBundle = shiki::langs::languages![rust];
 
 let mut highlighter = Highlighter::builder()
     .bundle(&LANGUAGES)
     .languages(["rust"])
     .themes([
-        ("dark", &shiki_themes::CATPPUCCIN_MOCHA),
-        ("light", &shiki_themes::CATPPUCCIN_LATTE),
+        ("dark", &shiki::themes::CATPPUCCIN_MOCHA),
+        ("light", &shiki::themes::CATPPUCCIN_LATTE),
     ])
     .build()?;
 
@@ -230,16 +238,16 @@ Choose the least expensive representation that fits the consumer:
 ## Shared engines and sessions
 
 Reuse a `Highlighter` for one long-lived workflow, or share a
-`HighlighterEngine` across independent documents. Engines share immutable
-grammar and theme data. Each `LanguageSession` owns its mutable scanner and
-scope caches, so sessions may advance independently without sharing document
-state.
+`HighlighterEngine` across independent documents. Engines share grammar IR,
+themes, and immutable native regex programs. Each `LanguageSession` owns its
+mutable scanner regions, dynamic regexes, and scope caches, so sessions may
+advance independently without sharing document state.
 
 ```rust
 let engine = shiki::Highlighter::builder()
     .bundle(&LANGUAGES)
     .languages(["rust"])
-    .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+    .theme(&shiki::themes::CATPPUCCIN_MOCHA)
     .build_engine()?;
 
 let mut session = engine.session("rust")?;
@@ -249,8 +257,13 @@ let first = session.tokenize_line("/* open", &mut state, true)?;
 let second = session.tokenize_line("close */", &mut state, false)?;
 ```
 
-Use `cache_stats` to inspect initialized caches. A reusable `Highlighter` can
-release them with `clear_language_cache` or `clear_all_caches`.
+Use `cache_stats` for a tokenizer's local state and referenced grammar slots,
+and `regex_cache_stats` for the engine-wide static regex cache. A reusable
+`Highlighter` can release local state with `clear_language_cache` or
+`clear_all_caches`; an engine can explicitly drop shared entries with
+`clear_regex_cache`. `TokenizerCacheStats` separates indexed grammar slots
+from source-dependent dynamic regexes, so diagnostics do not conflate the two
+lifetimes.
 
 ## Custom renderers
 
@@ -313,7 +326,9 @@ let highlighter = shiki::Highlighter::builder()
 Definitions may also be parsed or constructed separately with `RawGrammar`,
 `RawRule`, `RawTheme`, `RawThemeRule`, and their nested raw container types.
 `LanguageInput` adds aliases and external injection targets to runtime
-grammars.
+grammars. Capture retokenization is guarded by per-line nesting and work
+budgets, so a recursive runtime grammar returns an error instead of exhausting
+the stack.
 
 Disable JSON support when only a generated snapshot is needed:
 
@@ -336,7 +351,7 @@ themes once; each grammar IR is decoded only when that language is first used.
 Runtime grammar JSON parsing is not used.
 
 ```rust
-let mut highlighter = shiki_macros::highlighter! {
+let mut highlighter = shiki::highlighter! {
     languages: ["rust", "javascript"],
     themes: [
         ("dark", "catppuccin-mocha"),
@@ -354,7 +369,7 @@ cannot be embedded because they contain process-local pointers.
 Use `languages: all` to select every bundled language:
 
 ```rust
-let engine = shiki_macros::highlighter_engine! {
+let engine = shiki::highlighter_engine! {
     languages: all,
     themes: [("dark", "catppuccin-mocha")],
 };
@@ -363,8 +378,7 @@ let engine = shiki_macros::highlighter_engine! {
 For a macro-only target without target-side JSON dependencies:
 
 ```console
-cargo add shiki --no-default-features
-cargo add shiki-macros
+cargo add shiki --no-default-features --features macros
 ```
 
 The proc macro still parses bundled JSON assets on the host. The snapshot codec

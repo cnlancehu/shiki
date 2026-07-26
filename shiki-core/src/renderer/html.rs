@@ -128,7 +128,7 @@ fn render_html(
         None
     } else {
         let language = highlighter.language_index(language)?;
-        highlighter.ensure_tokenizer(language);
+        highlighter.ensure_tokenizer(language)?;
         Some(language)
     };
     let default_index = match options.default_theme.as_deref() {

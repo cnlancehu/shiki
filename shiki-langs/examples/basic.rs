@@ -1,8 +1,8 @@
-use shiki::{Highlighter, HtmlOptions, LanguageBundle};
+use shiki_core::{Highlighter, HtmlOptions, LanguageBundle};
 
 static LANGUAGES: LanguageBundle = shiki_langs::languages![rust];
 
-fn main() -> shiki::Result<()> {
+fn main() -> shiki_core::Result<()> {
     let mut highlighter = Highlighter::builder()
         .bundle(&LANGUAGES)
         .languages(["rust"])

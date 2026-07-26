@@ -9,7 +9,7 @@ multi-theme CSS-variable output.
 ## Installation
 
 ```console
-cargo add shiki shiki-langs shiki-themes
+cargo add shiki --features langs,themes
 ```
 
 ## One theme
@@ -19,7 +19,7 @@ Generated definitions are exported as uppercase constants:
 ```rust,ignore
 let mut highlighter = shiki::Highlighter::builder()
     .bundle(&LANGUAGES)
-    .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+    .theme(&shiki::themes::CATPPUCCIN_MOCHA)
     .build()?;
 ```
 
@@ -35,8 +35,8 @@ The name paired with each definition becomes its CSS custom-property prefix:
 let mut highlighter = shiki::Highlighter::builder()
     .bundle(&LANGUAGES)
     .themes([
-        ("dark", &shiki_themes::CATPPUCCIN_MOCHA),
-        ("light", &shiki_themes::CATPPUCCIN_LATTE),
+        ("dark", &shiki::themes::CATPPUCCIN_MOCHA),
+        ("light", &shiki::themes::CATPPUCCIN_LATTE),
     ])
     .build()?;
 
@@ -47,8 +47,10 @@ The HTML renderer emits colors such as `--dark` and `--light`. Font-style,
 font-weight, text-decoration, and background variables are emitted only when
 the resolved token needs them.
 
-Use `HtmlOptions::default_theme(...)` for an inline fallback theme, or
-`HtmlOptions::variables_only()` when application CSS manages theme switching.
+Set `HtmlOptions::default_theme` for an inline fallback theme. When application
+CSS manages theme switching, keep `include_theme_variables` enabled and set
+`include_default_theme_styles` to `false` to omit concrete fallback
+declarations.
 
 ## Metadata and raw themes
 
@@ -59,7 +61,7 @@ name, raw theme data, and a lazily compiled `Arc<Theme>`.
 small `ThemeBundle` for metadata lookup:
 
 ```rust,ignore
-let themes = shiki_themes::themes![dracula, nord, vesper];
+let themes = shiki::themes::themes![dracula, nord, vesper];
 let nord = themes.get("nord").expect("bundled theme");
 ```
 

@@ -1,3 +1,5 @@
+extern crate shiki_core as shiki;
+
 use std::time::Instant;
 
 fn main() {

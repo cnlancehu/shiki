@@ -1,0 +1,23 @@
+[package]
+name = "shiki-rs-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+description = "Core TextMate tokenizer and highlighting engine for shiki"
+readme = "README.md"
+
+[lib]
+name = "shiki_core"
+
+[features]
+default = ["json"]
+json = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+onig_sys.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+thiserror.workspace = true
+lz4_flex.workspace = true

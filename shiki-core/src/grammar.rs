@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+};
 
 #[cfg(feature = "json")]
 use serde::Deserialize;
@@ -193,10 +196,41 @@ pub struct Injection {
 
 type RepoChain<'a> = Vec<&'a RawMap<'static, RawRule<'static>>>;
 
-pub fn compile(
+pub(crate) trait GrammarResolver {
+    fn get(&self, scope: &str) -> Option<&RawGrammar<'static>>;
+}
+
+#[derive(Default)]
+pub(crate) struct PatternInterner {
+    values: Mutex<HashSet<Arc<str>>>,
+}
+
+impl PatternInterner {
+    fn intern(&self, pattern: String) -> Arc<str> {
+        let mut values = self
+            .values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(pattern) = values.get(pattern.as_str()) {
+            return pattern.clone();
+        }
+        let pattern: Arc<str> = Arc::from(pattern);
+        values.insert(pattern.clone());
+        pattern
+    }
+}
+
+impl GrammarResolver for HashMap<String, &RawGrammar<'static>> {
+    fn get(&self, scope: &str) -> Option<&RawGrammar<'static>> {
+        HashMap::get(self, scope).copied()
+    }
+}
+
+pub(crate) fn compile(
     scope_name: &str,
-    grammars: &HashMap<String, &RawGrammar<'static>>,
+    grammars: &impl GrammarResolver,
     external_injections: &HashMap<String, Vec<String>>,
+    pattern_interner: &PatternInterner,
 ) -> Result<CompiledGrammar> {
     let base = grammars
         .get(scope_name)
@@ -214,6 +248,8 @@ pub fn compile(
         scope_templates: Vec::new(),
         scope_template_ids: HashMap::new(),
         injection_selectors: SelectorSymbols::default(),
+        resolved_scopes: HashSet::new(),
+        pattern_interner,
     };
     let root_scope_name = compiler.intern_scope_name(&base.scope_name);
     let root = compiler.compile_root(base, base)?;
@@ -222,19 +258,34 @@ pub fn compile(
         let id = compiler.compile_rule(raw, &repo, base, base)?;
         compiler.add_injection(selector, id);
     }
-    let mut external_injections =
-        external_injections.iter().collect::<Vec<_>>();
-    external_injections.sort_by_key(|(target_scope, _)| target_scope.as_str());
-    for (target_scope, injection_scopes) in external_injections {
-        for injection_scope in injection_scopes {
-            if let Some(injection) = grammars.get(injection_scope) {
-                let id = compiler.compile_root(injection, base)?;
-                let selector = injection
-                    .injection_selector
-                    .as_deref()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| format!("L:{target_scope}"));
-                compiler.add_injection(&selector, id);
+    let mut processed_targets = HashSet::new();
+    loop {
+        let mut targets = compiler
+            .resolved_scopes
+            .iter()
+            .filter(|scope| !processed_targets.contains(*scope))
+            .cloned()
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            break;
+        }
+        targets.sort_unstable();
+        for target_scope in targets {
+            processed_targets.insert(target_scope.clone());
+            let Some(injection_scopes) = external_injections.get(&target_scope)
+            else {
+                continue;
+            };
+            for injection_scope in injection_scopes {
+                if let Some(injection) = grammars.get(injection_scope) {
+                    let id = compiler.compile_root(injection, base)?;
+                    let selector = injection
+                        .injection_selector
+                        .as_deref()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("L:{target_scope}"));
+                    compiler.add_injection(&selector, id);
+                }
             }
         }
     }
@@ -263,12 +314,17 @@ pub(crate) fn compile_plain_text() -> CompiledGrammar {
         injection_selector: None,
     };
     let grammars = HashMap::from([("text.plain".to_owned(), &raw)]);
-    compile("text.plain", &grammars, &HashMap::new())
-        .expect("the built-in plain-text grammar is always valid")
+    compile(
+        "text.plain",
+        &grammars,
+        &HashMap::new(),
+        &PatternInterner::default(),
+    )
+    .expect("the built-in plain-text grammar is always valid")
 }
 
-struct Compiler<'a> {
-    grammars: &'a HashMap<String, &'a RawGrammar<'static>>,
+struct Compiler<'a, 'i> {
+    grammars: &'a dyn GrammarResolver,
     rules: Vec<Rule>,
     roots: HashMap<(String, String), RuleId>,
     raw_cache: HashMap<(usize, String, String), RuleId>,
@@ -280,9 +336,11 @@ struct Compiler<'a> {
     scope_templates: Vec<ScopeTemplate>,
     scope_template_ids: HashMap<String, ScopeTemplateId>,
     injection_selectors: SelectorSymbols,
+    resolved_scopes: HashSet<String>,
+    pattern_interner: &'i PatternInterner,
 }
 
-impl<'a> Compiler<'a> {
+impl<'a, 'i> Compiler<'a, 'i> {
     fn add_injection(&mut self, selector: &str, rule: RuleId) {
         self.injections.extend(
             parse_scope_selector(selector, &mut self.injection_selectors)
@@ -313,6 +371,8 @@ impl<'a> Compiler<'a> {
         grammar: &'a RawGrammar<'static>,
         base: &'a RawGrammar<'static>,
     ) -> Result<RuleId> {
+        self.resolved_scopes
+            .insert(grammar.scope_name.as_ref().to_owned());
         let key = (
             grammar.scope_name.as_ref().to_owned(),
             base.scope_name.as_ref().to_owned(),
@@ -504,6 +564,8 @@ impl<'a> Compiler<'a> {
                 .split_once('#')
                 .map_or((include, None), |(scope, name)| (scope, Some(name)));
             if let Some(external) = self.grammars.get(scope) {
+                self.resolved_scopes
+                    .insert(external.scope_name.as_ref().to_owned());
                 if let Some(name) = name {
                     if let Some(raw) = external.repository.get(name) {
                         let external_repo = vec![&external.repository];
@@ -531,7 +593,7 @@ impl<'a> Compiler<'a> {
             return *id;
         }
         let id = self.patterns.len() as PatternSourceId;
-        let pattern: Arc<str> = Arc::from(pattern);
+        let pattern = self.pattern_interner.intern(pattern);
         self.patterns.push(pattern.clone());
         self.pattern_ids.insert(pattern, id);
         id

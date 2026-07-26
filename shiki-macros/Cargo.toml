@@ -16,6 +16,6 @@ proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
 
-shiki.workspace = true
+shiki-core = { workspace = true, features = ["json"] }
 shiki-langs.workspace = true
 shiki-themes.workspace = true

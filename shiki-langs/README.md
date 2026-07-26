@@ -8,7 +8,7 @@ TextMate grammar assets, aliases, dependency metadata, and injection targets.
 ## Installation
 
 ```console
-cargo add shiki shiki-langs shiki-themes
+cargo add shiki --features langs,themes
 ```
 
 ## Select languages at compile time
@@ -20,12 +20,12 @@ dependencies automatically:
 use shiki::{Highlighter, LanguageBundle};
 
 static LANGUAGES: LanguageBundle =
-    shiki_langs::languages![rust, javascript, typescript, vue];
+    shiki::langs::languages![rust, javascript, typescript, vue];
 
 let mut highlighter = Highlighter::builder()
     .bundle(&LANGUAGES)
     .languages(["rust", "javascript", "typescript", "vue"])
-    .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+    .theme(&shiki::themes::CATPPUCCIN_MOCHA)
     .build()?;
 ```
 
@@ -38,7 +38,7 @@ These names are also accepted by `languages!`, although they do not add a
 grammar asset:
 
 ```rust,ignore
-static PLAIN_TEXT: LanguageBundle = shiki_langs::languages![text];
+static PLAIN_TEXT: LanguageBundle = shiki::langs::languages![text];
 ```
 
 The builder's `.languages(...)` call enables selected roots from the bundle.
@@ -47,18 +47,21 @@ Omit it to enable every root contained in that bundle.
 ## Enable every language
 
 ```rust,ignore
-let languages = shiki_langs::all();
+let languages = shiki::langs::all();
 let engine = shiki::Highlighter::builder()
     .bundle(&languages)
-    .theme(&shiki_themes::CATPPUCCIN_MOCHA)
+    .theme(&shiki::themes::CATPPUCCIN_MOCHA)
     .build_engine()?;
 ```
 
 `ALL` is the equivalent constant bundle. `ALL_LANGUAGES` and
 `ALL_LANGUAGE_GROUPS` expose generated metadata for discovery and tooling.
 
-Building all languages has a larger startup and memory cost. Tokenizer caches
-are still initialized lazily per language, so sharing one engine is recommended.
+Building an engine with all languages records only catalog metadata. Grammar
+JSON, compiled grammar IR, and native regex programs initialize when a language
+is first used. Static regex programs are then shared by every session created
+from that engine, so keeping one engine alive avoids both repeated compilation
+and duplicate native regex memory.
 
 ## Generated definitions
 
@@ -71,6 +74,10 @@ such as `RUST`, `JAVASCRIPT`, or `VUE`. Definitions contain:
 - dependency roots;
 - external injection targets;
 - the generated or packaged raw grammar.
+
+Reading IDs, aliases, scopes, and dependency metadata does not parse grammar
+JSON. Calling `LanguageDefinition::grammar()` explicitly does initialize that
+raw asset; normal engine construction defers it until the language is used.
 
 `languages!` uses dependency groups rather than blindly bundling every grammar,
 so embedded languages and injections continue to work without unrelated assets.

@@ -6,4 +6,4 @@ mod macros;
 pub mod generated;
 
 pub use generated::*;
-pub use shiki::{ThemeBundle, ThemeDefinition};
+pub use shiki_core::{ThemeBundle, ThemeDefinition};

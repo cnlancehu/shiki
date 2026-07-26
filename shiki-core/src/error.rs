@@ -11,6 +11,8 @@ pub enum Error {
     },
     #[error("grammar `{0}` was not loaded")]
     GrammarNotLoaded(String),
+    #[error("grammar `{grammar}` could not be initialized: {message}")]
+    GrammarInitialization { grammar: String, message: String },
     #[error("grammar state belongs to a different language session")]
     GrammarStateMismatch,
     #[error("scope stack ID {0} does not belong to this language session")]
@@ -35,6 +37,14 @@ pub enum Error {
     InvalidRegex { pattern: String, message: String },
     #[error("regular expression search failed: {message}")]
     RegexSearch { message: String },
+    #[error(
+        "capture retokenization exceeded the nesting limit of {limit} (possible recursive grammar cycle)"
+    )]
+    CaptureRetokenizationDepthLimit { limit: usize },
+    #[error(
+        "capture retokenization exceeded the per-line work budget of {limit} bytes"
+    )]
+    CaptureRetokenizationWorkLimit { limit: usize },
     #[error("grammar include `{include}` could not be resolved in `{grammar}`")]
     UnresolvedInclude { grammar: String, include: String },
     #[error("no language has been selected")]

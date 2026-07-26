@@ -9,16 +9,17 @@ snapshot in the target crate. It does not emit one Rust expression per rule.
 ## Installation
 
 ```console
-cargo add shiki shiki-macros
+cargo add shiki --features macros
 ```
 
-The generated code refers to `::shiki`, so the target crate should depend on
-both crates directly.
+The facade re-exports both macros and keeps `shiki-macros` on the matching
+release. Direct `shiki-macros` dependencies remain supported, but generated
+code still refers to `::shiki`.
 
 ## Generate a highlighter
 
 ```rust,ignore
-let mut highlighter = shiki_macros::highlighter! {
+let mut highlighter = shiki::highlighter! {
     languages: ["rust", "javascript"],
     themes: [
         ("dark", "catppuccin-mocha"),
@@ -41,7 +42,7 @@ is omitted from `languages`.
 Select the complete bundled catalog with `languages: all`:
 
 ```rust,ignore
-let engine = shiki_macros::highlighter_engine! {
+let engine = shiki::highlighter_engine! {
     languages: all,
     themes: [("default", "github-dark")],
 };
@@ -56,7 +57,7 @@ Use `highlighter_engine!` when the application creates independent sessions or
 highlighters itself:
 
 ```rust,ignore
-let engine = shiki_macros::highlighter_engine! {
+let engine = shiki::highlighter_engine! {
     languages: ["rust"],
     themes: [("default", "github-dark")],
 };
@@ -76,8 +77,7 @@ Generated highlighters do not need runtime JSON parsing. Disable the default
 feature of the target-side `shiki` dependency:
 
 ```console
-cargo add shiki --no-default-features
-cargo add shiki-macros
+cargo add shiki --no-default-features --features macros
 ```
 
 With this setup, target-side `shiki` does not depend on `serde`, `serde_json`, or
